@@ -5,7 +5,7 @@ Thanks for contributing to `app-store-screenshots`.
 This repository is intentionally small, but changes still affect real agent behavior. Most contributions here change either:
 
 - `README.md`: how humans discover and install the skill
-- `skills/app-store-screenshots/SKILL.md`: how coding agents actually behave
+- `skills/advance-screenshots/SKILL.md`: how coding agents actually behave
 
 ## What Makes a Good Contribution
 
@@ -34,23 +34,23 @@ Usually not a fit:
 ## Before Opening a PR
 
 1. Check open PRs to avoid overlapping work.
-2. Read both `README.md` and `skills/app-store-screenshots/SKILL.md`.
+2. Read both `README.md` and `skills/advance-screenshots/SKILL.md`.
 3. Keep user-facing docs and skill behavior aligned when applicable.
 
 ## Testing Changes
 
-The canonical product is `skills/app-store-screenshots/template`, which ships the editor and its verification suite. Start with:
+The canonical product is `skills/advance-screenshots/template` (mirrored at `template/`), which ships the editor and its verification suite. Start with:
 
 ```bash
-cd skills/app-store-screenshots/template
-bun install --frozen-lockfile
+cd skills/advance-screenshots/template
+bun install
 bun run typecheck
 bun run build
 bun run test:e2e
 SCREENSHOTS_E2E_PRODUCTION=1 bun run test:e2e
 ```
 
-The Tester Army configuration launches a disposable template copy and uses installed Google Chrome. Every scaffold contains the same configuration, tests, legacy regression harnesses and CI workflow. Read [the flow matrix](skills/app-store-screenshots/template/docs/testing/e2e.md) for exact coverage and residual gaps.
+The Tester Army configuration launches a disposable template copy and uses installed Google Chrome. Every scaffold contains the same configuration, tests, legacy regression harnesses and CI workflow. Read [the flow matrix](skills/advance-screenshots/template/docs/testing/e2e.md) for exact coverage and residual gaps.
 
 The original `scripts/{bug-bash,ui-bug-bash,api-bug-bash}.cjs` commands remain compatibility entry points. Only run them against a disposable editor server; they write its project and upload assets. The API and export harnesses must run sequentially. Set `BUG_BASH_FILTER` for one browser check.
 

@@ -44,4 +44,4 @@ The canonical editor template now ships Tester Army configuration, 23 direct bro
 
 Fixed three additional issues: Undo after a rapid screen add could erase the preceding copy edit, reordering the initially selected screen could silently change the inspector selection, and cold dev page compilation after API-only traffic crashed on the Tailwind config's CommonJS `require`. Updated Next 16.3.6 to the 16.3.8 security release and validated build/type compatibility. The config failure was independently reported by Luna, reproduced in an isolated server, and repaired with a static ESM import; its root API harness then passed all nine groups.
 
-See [the current flow matrix and evidence](skills/app-store-screenshots/template/docs/testing/e2e.md) for exact commands, counts, retained red/green reports and verification limits.
+See [the current flow matrix and evidence](skills/advance-screenshots/template/docs/testing/e2e.md) for exact commands, counts, retained red/green reports and verification limits.

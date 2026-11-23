@@ -14,13 +14,13 @@ Some verification improvements observed during review are still being developed 
 
 ### 1. Put the executable project location at the first entry point — high priority
 
-**Observed:** agents repeatedly assume a root application before discovering `skills/app-store-screenshots/template/`. Explicit root `package.json` misses occur in the branch/merge session, capture session and code review; the asset cleanup initially searches root `public/`. In the latest bug bash, the agent creates a disposable copy but launches Next with the repository root as cwd, producing `Cannot find module .../app-store-screenshots/node_modules/next/dist/bin/next`, then retries with the correct disposable cwd.
+**Observed:** agents repeatedly assume a root application before discovering `skills/advance-screenshots/template/`. Explicit root `package.json` misses occur in the branch/merge session, capture session and code review; the asset cleanup initially searches root `public/`. In the latest bug bash, the agent creates a disposable copy but launches Next with the repository root as cwd, producing `Cannot find module .../app-store-screenshots/node_modules/next/dist/bin/next`, then retries with the correct disposable cwd.
 
 **Current gap:** there is no root `package.json` or repository-local `AGENTS.md`. The contributing guide is being updated to identify the canonical product, while its introduction still characterizes most changes as README/SKILL changes. The README's internal-doc pointer is plain text and appears after the scaffold tree. Neither gives an early task-to-file map.
 
 **Recommended change:** add a compact root `AGENTS.md`, around 50–80 lines, and a “Developing the editor” link near the top of README. Put these facts first:
 
-- The repository distributes a skill; the executable app and its package scripts live in `skills/app-store-screenshots/template/`.
+- The repository distributes a skill; the executable app and its package scripts live in `skills/advance-screenshots/template/`.
 - `SKILL.md` controls generation/migration behavior; template source controls the running editor.
 - Project content belongs in `app-store-screenshots.json`; `defaults.ts` is fallback/reset behavior.
 - Read `CONTRIBUTING.md` and the linked test matrix for current verification commands.
@@ -59,7 +59,7 @@ Some verification improvements observed during review are still being developed 
 | Question | Authority |
 | --- | --- |
 | Install/use the skill | Root README |
-| Agent discovery, scaffold and in-place upgrade behavior | `skills/app-store-screenshots/SKILL.md` and its references |
+| Agent discovery, scaffold and in-place upgrade behavior | `skills/advance-screenshots/SKILL.md` and its references |
 | Runtime state and API behavior | Template source plus template README |
 | Test commands and coverage | Template `package.json`, `CONTRIBUTING.md`, `docs/testing/e2e.md` |
 | Current device/theme/export definitions | Template `src/lib/constants.ts` |
@@ -87,7 +87,7 @@ Add a PR checklist mapping changed behavior to affected docs: state/migration, e
 
 ## Task-to-file map to use immediately
 
-All source paths in this table are relative to `skills/app-store-screenshots/template/` unless otherwise noted.
+All source paths in this table are relative to `skills/advance-screenshots/template/` (mirrored at `template/`) unless otherwise noted.
 
 | Task | Start here | Follow the boundary |
 | --- | --- | --- |
@@ -101,7 +101,7 @@ All source paths in this table are relative to `skills/app-store-screenshots/tem
 | RGB PNG encoding / worker fallback | `src/lib/png-rgb.ts`, `png-encode.ts`, `png-worker.ts` | Distinguish rendering failures from encoding failures |
 | Upload validation / serving | `src/app/api/{upload,upload-font}/route.ts` | `request-body.ts`, `request-guard.ts`, `write-asset.ts`, `serve-asset.ts`, runtime serving routes |
 | Device sizes, themes, font choices | `src/lib/constants.ts`, `types.ts` | Starter JSON vs. reset/fallback `defaults.ts` |
-| Generation/migration behavior | Repo `skills/app-store-screenshots/SKILL.md` | Style index, `_QUALITY_BAR.md`, selected style, `copy-ideas.md` |
+| Generation/migration behavior | Repo `skills/advance-screenshots/SKILL.md` | Style index, `_QUALITY_BAR.md`, selected style, `copy-ideas.md` |
 | Verification, after the new suite lands | `package.json`, `e2e.config.ts`, `docs/testing/e2e.md` | `tests/`, `tests/harness/`, `e2e-army/`; root scripts become wrappers |
 
 ## Suggested implementation order
