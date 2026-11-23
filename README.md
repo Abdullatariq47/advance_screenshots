@@ -3,14 +3,16 @@
 A Next.js visual editor and mobile capture pipeline for creating App Store and Google Play marketing screenshots. Includes live ADB screen capture, cross-platform system-bar sanitization, multiple iPhone hardware frames, a connected 2D canvas, automated palette and copy generation, and multi-resolution ZIP bundle export.
 
 <p align="center">
-  <a href="https://www.skills.sh/parthjadhav/app-store-screenshots/app-store-screenshots"><img src="assets/badges/skills-installs.svg" alt="14.1K installs on skills.sh" width="32%" /></a>
-  <a href="https://trendshift.io/repositories/22880#achievements"><img src="assets/badges/github-trending.svg" alt="GitHub Trending #12 in TypeScript on June 16, 2026" width="32%" /></a>
-  <a href="https://trendshift.io/repositories/22880#achievements"><img src="assets/badges/trendshift-daily.svg" alt="Trendshift #10 Repository of the Day across all languages on March 10, 2026" width="32%" /></a>
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" />
+  <img src="https://img.shields.io/badge/Next.js-16.3-black?logo=next.js" alt="Next.js 16" />
+  <img src="https://img.shields.io/badge/TypeScript-5.7-blue?logo=typescript" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Platforms-iOS%20%7C%20Android-purple" alt="iOS and Android" />
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
 </p>
 
-![Current connected-canvas editor showing a Bloom screenshot deck](example.png)
+![Advance Screenshots connected-canvas visual editor](example.png)
 
-Example screenshots generated with this tool were accepted for [Bloom Coffee Shelf Recipe on the App Store](https://apps.apple.com/us/app/bloom-coffee-shelf-recipe/id6759914524).
+> **Built on top of [Parth Jadhav's](https://www.parthjadhav.com/) [`app-store-screenshots`](https://github.com/ParthJadhav/app-store-screenshots) foundation with advanced mobile capture, cross-platform status-bar sanitization, multi-frame bezels, and 2D canvas extensions.** See [CREDITS.md](CREDITS.md) for full licensing and attribution details.
 
 ---
 
