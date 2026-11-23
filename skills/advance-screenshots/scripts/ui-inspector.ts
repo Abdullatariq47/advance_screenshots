@@ -187,6 +187,40 @@ export function findButtonByKeywords(elements: UiElement[], keywords: RegExp): U
   );
 }
 
+/**
+ * Searches UI elements for a clickable button, tab, card, or menu item
+ * that matches a target screen name (e.g. "Profile", "Orders", "Settings").
+ */
+export function findElementForGoal(elements: UiElement[], targetName: string): UiElement | undefined {
+  if (!targetName) return undefined;
+  const cleanTarget = targetName.replace(/screen|view|page|tab/gi, "").trim();
+  if (!cleanTarget) return undefined;
+
+  const wordRegex = new RegExp(`\\b${cleanTarget}\\b`, "i");
+  const subRegex = new RegExp(cleanTarget, "i");
+
+  // 1. Clickable element matching exact word boundary in text or contentDesc
+  const match = elements.find(el =>
+    el.clickable &&
+    (wordRegex.test(el.text) || wordRegex.test(el.contentDesc))
+  );
+  if (match) return match;
+
+  // 2. Clickable element with substring match in text, contentDesc, or resourceId
+  const subMatch = elements.find(el =>
+    el.clickable &&
+    (subRegex.test(el.text) || subRegex.test(el.contentDesc) || subRegex.test(el.resourceId))
+  );
+  if (subMatch) return subMatch;
+
+  // 3. Text element whose parent container might be clickable (ignore system bar y < 150)
+  const textMatch = elements.find(el =>
+    (wordRegex.test(el.text) || subRegex.test(el.text)) &&
+    el.bounds.cy > 150
+  );
+  return textMatch;
+}
+
 export function getDeviceScreenDimensions(adbCmd: string): { width: number; height: number } {
   try {
     const out = execSync(`${adbCmd} shell wm size`, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });

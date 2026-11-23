@@ -11,6 +11,7 @@ import {
   findInputForPassword,
   findButtonByKeywords,
   findBottomNavTabs,
+  findElementForGoal,
   getDeviceScreenDimensions,
   minimizeKeyboard,
   clearAndInputText,
@@ -28,11 +29,12 @@ import {
   getAdbPath
 } from "./device-detector.js";
 
-function parseArgs(): { configPath: string; projectDir?: string; coldRestart: boolean; platform?: "ios" | "android" } {
+function parseArgs(): { configPath: string; projectDir?: string; coldRestart: boolean; platform?: "ios" | "android"; screens?: string[] } {
   const args = process.argv.slice(2);
   let configPath = path.resolve(process.cwd(), "pipeline.config.json");
   let projectDir: string | undefined;
   let platform: "ios" | "android" | undefined;
+  let screens: string[] | undefined;
   const coldRestart = args.includes("--cold-restart") || args.includes("--restart");
 
   for (let i = 0; i < args.length; i++) {
@@ -46,8 +48,11 @@ function parseArgs(): { configPath: string; projectDir?: string; coldRestart: bo
       const p = args[i + 1].trim().toLowerCase();
       if (p === "ios" || p === "android") platform = p;
     }
+    if (args[i] === "--screens" && args[i + 1]) {
+      screens = args[i + 1].split(",").map(s => s.trim()).filter(Boolean);
+    }
   }
-  return { configPath, projectDir, coldRestart, platform };
+  return { configPath, projectDir, coldRestart, platform, screens };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -292,13 +297,22 @@ async function runIosAutonomousWorkflow(
   }
 
   // 3. Navigate through remaining screens with smart guidance
-  const rl = readline.createInterface({ input, output });
-  const maxScreens = Math.min(Math.max(config.captureGoals?.length || 4, 3), 6);
+  const specificGoals = (config.captureGoals || []).filter((g: any) =>
+    g.target && !/splash|launch/i.test(g.target) && (!/login|auth/i.test(g.target) || !config.app.auth?.hasAuth)
+  );
 
-  console.log(`\n👉 Autonomous Explorer: Capture up to ${maxScreens} key screens of your app.`);
-  while (slideIndex <= maxScreens) {
-    const goal = config.captureGoals?.[slideIndex - 1]?.target || `Screen ${slideIndex}`;
-    const ans = await rl.question(`\n[Screen ${slideIndex}] Navigate on your iPhone to [${goal}] and press [ENTER] (or 'done' to finish): `);
+  const goalsToExplore = specificGoals.length > 0 ? specificGoals : [
+    { target: "Feed / Explore" },
+    { target: "Activity / Orders" },
+    { target: "Profile / Settings" }
+  ];
+
+  const rl = readline.createInterface({ input, output });
+  console.log(`\n👉 Autonomous Explorer: Navigating through ${goalsToExplore.length} target screen(s)...`);
+  for (const goal of goalsToExplore) {
+    if (/home|dashboard/i.test(goal.target) && slideIndex > 2) continue;
+
+    const ans = await rl.question(`\n[Screen ${slideIndex}] Please navigate on your iPhone to [${goal.target}] and press [ENTER] (or 'done' to finish): `);
     const trimmed = ans.trim().toLowerCase();
 
     if (trimmed === "done" || trimmed === "d" || trimmed === "q") {
@@ -306,7 +320,7 @@ async function runIosAutonomousWorkflow(
     }
 
     await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
-    console.log(`   ✓ [${goal}] Captured -> slide-${slideIndex}.png`);
+    console.log(`   ✓ [${goal.target}] Captured -> slide-${slideIndex}.png`);
     slideIndex++;
   }
   rl.close();
@@ -414,13 +428,64 @@ async function runAndroidAutonomousWorkflow(
       slideIndex++;
     }
 
-    // 4. Explore Remaining Tabs & Screens
-    console.log(`\n🔍 Locating Bottom Navigation Tabs...`);
+    // 4. Explore Remaining Tabs & Screens (User-Specified Goals or Autonomous Discovery)
     const { width: screenWidth, height: screenHeight } = getDeviceScreenDimensions(adbCmd);
-    const uiNodes = dumpCurrentUi(adbCmd);
-    const tabs = findBottomNavTabs(uiNodes, screenHeight);
+    const specificGoals = (config.captureGoals || []).filter((g: any) =>
+      g.target && !/splash|launch/i.test(g.target) && (!/login|auth/i.test(g.target) || !config.app.auth?.hasAuth)
+    );
+    const hasCustomGoals = config.captureMode === "custom" || (specificGoals.length > 0 && !specificGoals.every((g: any) => /dashboard|navigation view/i.test(g.target)));
 
-    if (tabs.length > 0) {
+    if (hasCustomGoals && specificGoals.length > 0) {
+      console.log(`\n🎯 Navigating to ${specificGoals.length} User-Specified Screen Target(s)...`);
+
+      for (const goal of specificGoals) {
+        if (/home|dashboard/i.test(goal.target) && slideIndex > 2) {
+          continue;
+        }
+
+        console.log(`\n[Screen ${slideIndex}] Locating target: [${goal.target}]...`);
+        const liveNodes = dumpCurrentUi(adbCmd);
+        const matchElement = findElementForGoal(liveNodes, goal.target);
+
+        if (matchElement) {
+          console.log(`   ✓ Found matching navigation button for [${goal.target}] at (${matchElement.bounds.cx}, ${matchElement.bounds.cy}). Auto-navigating...`);
+          await watcher.executeAndWaitForNavigation(() => {
+            execSync(`${adbCmd} -s ${device.id} shell input tap ${matchElement.bounds.cx} ${matchElement.bounds.cy}`, { stdio: "ignore" });
+          }, 450, 4000);
+
+          await sleep(800);
+          await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+          console.log(`   ✓ [${goal.target}] Captured -> slide-${slideIndex}.png`);
+          slideIndex++;
+
+          // If it was an inner view or card (not in bottom navigation bar), press back to return to main feed
+          if (matchElement.bounds.cy < screenHeight * 0.8) {
+            try {
+              console.log(`   • Returning to main screen for next goal...`);
+              execSync(`${adbCmd} -s ${device.id} shell input keyevent 4`, { stdio: "ignore" });
+              await sleep(600);
+            } catch {}
+          }
+        } else {
+          console.log(`   ℹ Navigation element for [${goal.target}] not found on current screen.`);
+          if (process.stdin.isTTY) {
+            const rl = readline.createInterface({ input, output });
+            const ans = await rl.question(`👉 Please navigate to [${goal.target}] on your phone, then press [ENTER] to capture (or 'skip'): `);
+            rl.close();
+            if (ans.trim().toLowerCase() !== "skip" && ans.trim().toLowerCase() !== "s") {
+              await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+              console.log(`   ✓ [${goal.target}] Captured -> slide-${slideIndex}.png`);
+              slideIndex++;
+            }
+          }
+        }
+      }
+    } else {
+      console.log(`\n🔍 Locating Bottom Navigation Tabs...`);
+      const uiNodes = dumpCurrentUi(adbCmd);
+      const tabs = findBottomNavTabs(uiNodes, screenHeight);
+
+      if (tabs.length > 0) {
       console.log(`   ✓ Detected ${tabs.length} tabs dynamically:`);
       for (const t of tabs) {
         const label = (t.contentDesc || t.text || "Tab").split("\n")[0].trim();
@@ -511,6 +576,7 @@ async function runAndroidAutonomousWorkflow(
         }
       }
     }
+    }
 
     console.log(`\n==========================================================`);
     console.log(`🎉 Project Complete! Total ${slideIndex - 1} screenshots saved in:`);
@@ -522,13 +588,18 @@ async function runAndroidAutonomousWorkflow(
 }
 
 async function main() {
-  const { configPath, projectDir: argProjectDir, coldRestart, platform: argPlatform } = parseArgs();
+  const { configPath, projectDir: argProjectDir, coldRestart, platform: argPlatform, screens } = parseArgs();
   if (!fs.existsSync(configPath)) {
     console.error(`[Agent Executor] Configuration file not found at ${configPath}`);
     process.exit(1);
   }
 
   const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  if (screens && screens.length > 0) {
+    config.captureGoals = screens.map(s => ({ target: s, instruction: `Capture ${s}` }));
+    config.captureMode = "custom";
+    console.log(`🎯 Custom Target Screens Configured: ${screens.join(", ")}`);
+  }
   const requestedPlatform: "ios" | "android" = argPlatform || config?.app?.platform || (process.platform === "darwin" ? "ios" : "android");
 
   const connectedDevices = detectAllConnectedDevices();

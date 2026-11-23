@@ -54,6 +54,13 @@ async function run() {
   const configPath = path.resolve(process.cwd(), "pipeline.config.json");
   const adbCmd = getAdbPath();
 
+  let customScreensArg: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--screens" && args[i + 1]) {
+      customScreensArg = args[i + 1];
+    }
+  }
+
   let existingConfig: any = null;
   if (fs.existsSync(configPath)) {
     try {
@@ -74,6 +81,15 @@ async function run() {
     projectDir = path.resolve(process.cwd(), "projects", config?.app?.appId || "default-app");
   }
 
+  if (customScreensArg && config) {
+    const screenNames = customScreensArg.split(",").map(s => s.trim()).filter(Boolean);
+    if (screenNames.length > 0) {
+      config.captureGoals = screenNames.map(n => ({ target: n, instruction: `Capture ${n}` }));
+      config.captureMode = "custom";
+      console.log(`🎯 Custom Target Screens Configured: ${screenNames.join(", ")}`);
+    }
+  }
+
   if (!config) {
     console.error("Missing configuration. Please run the wizard to configure your app.");
     process.exit(1);
@@ -88,11 +104,12 @@ async function run() {
   console.log("=== Step 1: Initiating Dynamic Mobile Navigation ===");
   try {
     const platformFlag = config.app?.platform ? ` --platform "${config.app.platform}"` : "";
+    const screensFlag = customScreensArg ? ` --screens "${customScreensArg}"` : "";
     if (config.captureMode === "manual") {
       console.log("Manual Operator Mode: Browse the app on your device and snap screens.\n");
       execSync(`npx tsx ./scripts/manual-operator.ts --config "${configPath}" --projectDir "${projectDir}"${platformFlag} --captureOnly`, { stdio: "inherit" });
     } else {
-      execSync(`npx tsx ./scripts/agent-executor.ts --config "${configPath}" --projectDir "${projectDir}"${platformFlag}`, { stdio: "inherit" });
+      execSync(`npx tsx ./scripts/agent-executor.ts --config "${configPath}" --projectDir "${projectDir}"${platformFlag}${screensFlag}`, { stdio: "inherit" });
     }
   } catch (err) {
     console.error("\n❌ [Pipeline Error] Screen capture process failed or was aborted.");
