@@ -60,9 +60,12 @@ For users who prefer running the tool directly from terminal or web browser with
 git clone https://github.com/Abdullatariq47/advance_screenshots.git
 cd advance_screenshots
 
-# 2. Install dependencies
-npm install
-npm --prefix template install
+# 2. Automated 1-step setup (installs Node via brew/winget if missing, or skips if already present):
+./setup.sh        # macOS / Linux
+.\setup.ps1       # Windows PowerShell
+
+# Or manual dependency install:
+npm install && npm --prefix template install
 
 # 3. Choose your manual mode:
 npm run capture:manual -- --appId com.example.app  # Interactive terminal snapper [+]

@@ -61,15 +61,21 @@ Your AI agent will automatically detect the skill via `SKILL.md`, orchestrate AD
 
 For developers, designers, or QA teams who prefer a direct terminal CLI and web browser workflow without needing an AI coding agent:
 
-#### Installation
-```bash
-# 1. Clone the repository
-git clone https://github.com/Abdullatariq47/advance_screenshots.git
-cd advance_screenshots
+#### Quick Automated Setup (Recommended for Mobile Devs)
+Whether you are a native Swift/Xcode developer or Kotlin/Android Studio developer, you don't need to manually configure Node:
 
-# 2. Install root pipeline and editor dependencies
-npm install
-npm --prefix template install
+```bash
+# On macOS / Linux (auto-detects Node, installs via Homebrew if missing):
+chmod +x setup.sh && ./setup.sh
+
+# On Windows (auto-detects Node, installs via winget if missing):
+.\setup.ps1
+```
+*(If Node.js and npm are already installed on your machine, the scripts detect them automatically and skip re-installation).*
+
+Or install manually if you already use npm:
+```bash
+npm install && npm --prefix template install
 ```
 
 #### Manual Run Commands
