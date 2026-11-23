@@ -1,24 +1,6 @@
-/** Disk writes require JSON and the editor's own origin or allowed local/network dev origins. */
+/** Disk writes require JSON and the editor's own origin. Headerless CLI
+ * requests remain supported; these checks do not provide network authentication. */
 export type GuardFailure = { error: string; status: number };
-
-function isAllowedDevOrigin(origin: string | null): boolean {
-  if (!origin) return true;
-  try {
-    const url = new URL(origin);
-    const host = url.hostname;
-    return (
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host === "0.0.0.0" ||
-      host.startsWith("192.168.") ||
-      host.startsWith("10.") ||
-      host.startsWith("100.") || // Tailscale / CGNAT
-      host.endsWith(".local")
-    );
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Returns a failure to respond with, or null when the request is allowed.
@@ -32,12 +14,8 @@ export function rejectCrossSiteWrite(req: Request): GuardFailure | null {
     return { error: "Content-Type must be application/json", status: 415 };
   }
 
-  // 2. Allow local development access from localhost, LAN, or Tailscale
+  // 2. Another local app (including a different port) is a different origin.
   const origin = req.headers.get("origin");
-  if (isAllowedDevOrigin(origin)) {
-    return null;
-  }
-
   // Next can canonicalize req.url to localhost even when the browser used
   // 127.0.0.1 or a LAN address. Host is the browser's actual request authority.
   const target = new URL(req.url);

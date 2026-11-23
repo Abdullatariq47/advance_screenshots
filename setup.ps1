@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Advance Screenshots - Automated Environment Setup (Windows PowerShell)
 # Idempotent: Safe to run repeatedly; automatically skips existing installations.
 # ==============================================================================
