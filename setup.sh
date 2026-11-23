@@ -41,7 +41,18 @@ else
     fi
 fi
 
-# 2. Check Android ADB (Optional for mobile live capture)
+# 2. Check Mobile Device Bridge Tools
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    if command -v xcrun >/dev/null 2>&1; then
+        echo -e "${GREEN}[✓] Xcode tools (xcrun simctl) detected for iOS Simulator.${RESET}"
+    fi
+    if command -v idevicescreenshot >/dev/null 2>&1; then
+        echo -e "${GREEN}[✓] libimobiledevice detected for physical iPhone capture.${RESET}"
+    else
+        echo -e "${YELLOW}[i] Tip: For physical iPhone USB capture on macOS, run: brew install libimobiledevice${RESET}"
+    fi
+fi
+
 if command -v adb >/dev/null 2>&1; then
     ADB_VERSION=$(adb version 2>/dev/null | head -n 1)
     echo -e "${GREEN}[✓] Android Debug Bridge (ADB) detected: ${ADB_VERSION}${RESET}"

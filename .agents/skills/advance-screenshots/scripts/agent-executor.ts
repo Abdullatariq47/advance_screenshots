@@ -266,7 +266,11 @@ async function runIosAutonomousWorkflow(
       console.log(`   ℹ Simulator launch notice: please ensure app is installed on simulator.`);
     }
   } else {
-    console.log(`[Screen ${slideIndex}] Please tap "${config.app.appId}" on your iPhone screen to open it.`);
+    console.log(`[Screen ${slideIndex}] Please open "${config.app.appId}" on your iPhone screen.`);
+    const rl = readline.createInterface({ input, output });
+    await rl.question(`Press [ENTER] once "${config.app.appId}" is open and visible on your iPhone... `);
+    rl.close();
+    await sleep(600);
   }
 
   // Capture Landing / Splash Screen

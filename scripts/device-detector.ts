@@ -15,7 +15,7 @@ export function getAdbPath(): string {
   try {
     execSync("adb version", { stdio: "ignore" });
     return "adb";
-  } catch {}
+  } catch { }
 
   const candidates = [
     path.join(process.env.LOCALAPPDATA || "", "Android/Sdk/platform-tools/adb.exe"),
@@ -60,9 +60,9 @@ export function detectAllConnectedDevices(): ConnectedDevice[] {
           }
         }
       }
-    } catch {}
+    } catch { }
 
-    // 1b. Check for Physical iPhone via devicectl
+    // 1b. Check for Physical iPhone via devicectl or idevice_id
     try {
       const devOut = execSync("xcrun devicectl list devices 2>/dev/null || true", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
       const lines = devOut.split("\n");
@@ -79,7 +79,7 @@ export function detectAllConnectedDevices(): ConnectedDevice[] {
           });
         }
       }
-    } catch {}
+    } catch { }
 
     // 1c. Fallback for physical iPhone: idevice_id from libimobiledevice
     if (!devices.some(d => d.platform === "ios" && d.type === "physical")) {
@@ -96,7 +96,7 @@ export function detectAllConnectedDevices(): ConnectedDevice[] {
             });
           }
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -121,7 +121,7 @@ export function detectAllConnectedDevices(): ConnectedDevice[] {
         });
       }
     }
-  } catch {}
+  } catch { }
 
   return devices;
 }
@@ -158,13 +158,19 @@ export async function captureDeviceScreenshot(device: ConnectedDevice, destPath:
             return fs.existsSync(destPath) && fs.statSync(destPath).size > 1000;
           } catch {}
         }
+
+        console.error("\n❌ [Physical iPhone USB Capture Setup]");
+        console.error("   To capture screenshots directly from a physical iPhone connected via USB on macOS:");
+        console.error("   👉 Run: brew install libimobiledevice");
+        console.error("   (Or use the iOS Simulator via 'open -a Simulator', which captures directly via xcrun)\n");
+        return false;
       }
     } else {
       // Android
       const adbCmd = device.adbCmd || getAdbPath();
       execSync(`${adbCmd} -s ${device.id} shell screencap -p /sdcard/adv_snap.png`, { stdio: "ignore" });
       execSync(`${adbCmd} -s ${device.id} pull /sdcard/adv_snap.png "${destPath}"`, { stdio: "ignore" });
-      try { execSync(`${adbCmd} -s ${device.id} shell rm -f /sdcard/adv_snap.png`, { stdio: "ignore" }); } catch {}
+      try { execSync(`${adbCmd} -s ${device.id} shell rm -f /sdcard/adv_snap.png`, { stdio: "ignore" }); } catch { }
       return fs.existsSync(destPath) && fs.statSync(destPath).size > 1000;
     }
   } catch (err) {
@@ -174,62 +180,21 @@ export async function captureDeviceScreenshot(device: ConnectedDevice, destPath:
 }
 
 /**
- * Cross-platform screen capture helper given platform and optional deviceId.
- */
-export async function captureScreenForPlatform(platform: "ios" | "android", destPath: string, deviceId?: string): Promise<boolean> {
-  if (platform === "ios") {
-    // Try simulator first
-    try {
-      execSync(`xcrun simctl io ${deviceId || "booted"} screenshot "${destPath}"`, { stdio: "ignore" });
-      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) return true;
-    } catch {}
-
-    // Try physical iPhone
-    try {
-      execSync(`idevicescreenshot "${destPath}"`, { stdio: "ignore" });
-      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) return true;
-    } catch {}
-
-    try {
-      execSync(`pymobiledevice3 screenshot "${destPath}"`, { stdio: "ignore" });
-      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) return true;
-    } catch {}
-
-    return false;
-  } else {
-    const adbCmd = getAdbPath();
-    const targetFlag = deviceId ? `-s ${deviceId}` : "";
-    try {
-      execSync(`${adbCmd} ${targetFlag} shell screencap -p /sdcard/adv_snap.png`, { stdio: "ignore" });
-      execSync(`${adbCmd} ${targetFlag} pull /sdcard/adv_snap.png "${destPath}"`, { stdio: "ignore" });
-      try { execSync(`${adbCmd} ${targetFlag} shell rm -f /sdcard/adv_snap.png`, { stdio: "ignore" }); } catch {}
-      return fs.existsSync(destPath) && fs.statSync(destPath).size > 1000;
-    } catch (err) {
-      console.warn("   ⚠ Android screencap failed:", err);
-      return false;
-    }
-  }
-}
-
-/**
  * Launches an application on the designated device.
  */
-export function launchDeviceApp(platform: "ios" | "android", appId: string, deviceId?: string): boolean {
+export function launchDeviceApp(device: ConnectedDevice, appId: string): boolean {
   try {
-    if (platform === "ios") {
-      try {
-        execSync(`xcrun simctl launch ${deviceId || "booted"} ${appId}`, { stdio: "ignore" });
+    if (device.platform === "ios") {
+      if (device.type === "simulator") {
+        execSync(`xcrun simctl launch ${device.id || "booted"} ${appId}`, { stdio: "ignore" });
         return true;
-      } catch {
-        // On physical iPhone or if simctl fails, notify user to tap app icon
-        return false;
       }
     } else {
-      const adbCmd = getAdbPath();
-      const targetFlag = deviceId ? `-s ${deviceId}` : "";
-      execSync(`${adbCmd} ${targetFlag} shell monkey -p ${appId} -c android.intent.category.LAUNCHER 1`, { stdio: "ignore" });
+      const adbCmd = device.adbCmd || getAdbPath();
+      execSync(`${adbCmd} -s ${device.id} shell monkey -p ${appId} -c android.intent.category.LAUNCHER 1`, { stdio: "ignore" });
       return true;
     }
-  } catch {}
+  } catch { }
   return false;
 }
+
