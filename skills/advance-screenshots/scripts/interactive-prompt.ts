@@ -4,10 +4,11 @@ import { stdin as input, stdout as output } from "process";
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
+import { detectAllConnectedDevices, ConnectedDevice } from "./device-detector.js";
 
 export interface PipelineConfig {
   app: {
-    platform: string;
+    platform: "ios" | "android" | string;
     appId: string;
     auth: {
       hasAuth: boolean;
@@ -79,8 +80,31 @@ export async function promptPipelineConfig(
   console.log("Screenshot Pipeline - Project Setup Wizard");
   console.log("==========================================================");
 
-  // Auto-detect active app from connected phone
-  const detectedPackage = detectActivePackage(adbCmd);
+  // Auto-detect connected iOS and Android devices
+  const connectedDevices = detectAllConnectedDevices();
+  const iosDevice = connectedDevices.find(d => d.platform === "ios");
+  const androidDevice = connectedDevices.find(d => d.platform === "android");
+
+  // Determine smart default platform
+  let detectedPlatform: "ios" | "android" = iosDevice ? "ios" : (androidDevice ? "android" : (process.platform === "darwin" ? "ios" : "android"));
+
+  if (connectedDevices.length > 0) {
+    console.log(`Connected Devices Detected:`);
+    for (const d of connectedDevices) {
+      console.log(`   • [${d.platform.toUpperCase()}] ${d.name} (${d.type})`);
+    }
+  }
+
+  // Allow selecting or confirming platform
+  let targetPlatform: "ios" | "android" = detectedPlatform;
+  if (process.platform === "darwin" || connectedDevices.length > 1 || (!iosDevice && !androidDevice)) {
+    const platformAns = await rl.question(`\nTarget Platform: 1) iPhone / iOS   2) Android [${detectedPlatform === "ios" ? "1" : "2"}]: `);
+    targetPlatform = platformAns.trim() === "2" ? "android" : (platformAns.trim() === "1" ? "ios" : detectedPlatform);
+    console.log(`✓ Active Target Platform: ${targetPlatform === "ios" ? "iPhone / iOS" : "Android"}`);
+  }
+
+  // Auto-detect active app from connected phone (if Android)
+  const detectedPackage = targetPlatform === "android" ? detectActivePackage(adbCmd) : null;
   if (detectedPackage) {
     console.log(`Live Device Active App Detected: ${detectedPackage}`);
     console.log(`   ⚡ Zero-Restart Attach: We'll snap your running app directly — session & active screen are preserved!`);
@@ -88,13 +112,13 @@ export async function promptPipelineConfig(
 
   // 1. CHOOSE EXECUTION MODE FIRST
   console.log(`\n[1/3] Choose Execution Mode:`);
-  console.log(`      1) [Manual Operator Mode] (Recommended)`);
+  console.log(`      1) [Manual Operator Mode] (Recommended for immediate capture)`);
   console.log(`         • Launch your app on your device freely`);
-  console.log(`         • Press [+] to snap any screen at your own pace`);
-  console.log(`         • No bundle ID or login credentials required!`);
+  console.log(`         • Press [+] in terminal to snap any screen at your own pace`);
+  console.log(`         • Zero configuration, no login credentials required`);
   console.log(`      2) [Full Auto Lifecycle] (Autonomous AI Agent)`);
-  console.log(`         • Headless agent launches package, logs in, & explores screens`);
-  console.log(`         • Requires Target Android Package ID & credentials`);
+  console.log(`         • Headless agent launches package, navigates, & pauses for user login`);
+  console.log(`         • Auto-detects login/onboarding & asks user to interact when needed`);
   console.log(`      3) [Interactive Guided Mode]`);
   console.log(`      4) [Custom Screen List]`);
 
@@ -120,7 +144,7 @@ export async function promptPipelineConfig(
     captureMode = "manual";
     captureGoals = [];
 
-    console.log(`\nSelected Manual Operator Mode - no bundle ID or credentials needed.`);
+    console.log(`\nSelected Manual Operator Mode - launch app on your ${targetPlatform === "ios" ? "iPhone" : "Android device"}.`);
 
     // Simply ask for App Display Name
     const appNameAnswer = await rl.question(`\n[2/3] App Display Name for Store Screenshots [${inferredAppName}]: `);
@@ -141,7 +165,7 @@ export async function promptPipelineConfig(
 
     const config: PipelineConfig = {
       app: {
-        platform: "android",
+        platform: targetPlatform,
         appId: targetAppId,
         auth: {
           hasAuth: false,
@@ -154,7 +178,7 @@ export async function promptPipelineConfig(
         appName,
         shortDescription,
         themePreset: activeSaved?.marketing?.themePreset || "clean-light",
-        accentColor: activeSaved?.marketing?.accentColor || "#4F46E5",
+        accentColor: activeSaved?.marketing?.accentColor || (targetPlatform === "ios" ? "#007AFF" : "#4F46E5"),
       },
     };
 
@@ -182,14 +206,15 @@ export async function promptPipelineConfig(
     captureMode = "auto-lifecycle";
   }
 
-  // Autonomous modes require target package ID to launch over ADB
+  // Autonomous modes require target package ID or Bundle ID
+  const platformLabel = targetPlatform === "ios" ? "iOS Bundle ID or App Name" : "Android Package ID";
   const promptText = targetAppId
-    ? `\nTarget Android Package ID [${targetAppId}]: `
-    : `\nTarget Android Package ID (e.g. com.example.app): `;
+    ? `\nTarget ${platformLabel} [${targetAppId}]: `
+    : `\nTarget ${platformLabel} (e.g. com.example.app): `;
   const appIdAnswer = await rl.question(promptText);
   targetAppId = appIdAnswer.trim() || targetAppId;
   while (!targetAppId) {
-    const retry = await rl.question(`   Package ID cannot be empty. Please enter Target Package ID: `);
+    const retry = await rl.question(`   ${platformLabel} cannot be empty. Please enter: `);
     targetAppId = retry.trim();
   }
 
@@ -198,21 +223,28 @@ export async function promptPipelineConfig(
   // Authentication
   const savedHasAuth = activeSaved?.app?.auth?.hasAuth ?? false;
   const authPromptLabel = savedHasAuth ? "(Y/n) [Y]" : "(y/N) [N]";
-  const hasAuthAnswer = await rl.question(`\nDoes this app require automated login? ${authPromptLabel}: `);
+  const hasAuthAnswer = await rl.question(`\nDoes this app have a login / sign-in screen? ${authPromptLabel}: `);
   hasAuth = hasAuthAnswer.trim() ? hasAuthAnswer.trim().toLowerCase() === "y" : savedHasAuth;
 
   if (hasAuth) {
+    console.log(`   💡 Tip: If you enter credentials, AI will try auto-fill.`);
+    console.log(`   💡 If left blank (or on OTP/SSO), the AI will pause and ask you to log in on your device!`);
     const savedEmail = activeSaved?.app?.auth?.credentials?.email || "";
-    const emailPrompt = savedEmail ? `   • Email or Username [${savedEmail}]: ` : `   • Email or Username: `;
+    const emailPrompt = savedEmail ? `   • Email or Username [${savedEmail}]: ` : `   • Email or Username (optional, press Enter to skip): `;
     const emailAnswer = await rl.question(emailPrompt);
     const email = emailAnswer.trim() || savedEmail;
 
-    const savedPass = activeSaved?.app?.auth?.credentials?.password || "";
-    const passPrompt = savedPass ? `   • Password [Saved]: ` : `   • Password: `;
-    const passAnswer = await rl.question(passPrompt);
-    const password = passAnswer.trim() || savedPass;
+    let password = "";
+    if (email) {
+      const savedPass = activeSaved?.app?.auth?.credentials?.password || "";
+      const passPrompt = savedPass ? `   • Password [Saved]: ` : `   • Password: `;
+      const passAnswer = await rl.question(passPrompt);
+      password = passAnswer.trim() || savedPass;
+    }
 
-    credentials = { email, password };
+    if (email && password) {
+      credentials = { email, password };
+    }
   }
 
   if (captureMode === "custom") {
@@ -244,12 +276,12 @@ export async function promptPipelineConfig(
 
   const config: PipelineConfig = {
     app: {
-      platform: "android",
+      platform: targetPlatform,
       appId: targetAppId,
       auth: {
         hasAuth,
         credentials,
-        hints: "Auto-fill, validate fields, minimize keyboard, tap Login, and confirm transition to Dashboard.",
+        hints: "Auto-detect login/onboarding. If interaction is needed, pause gracefully and prompt the user on device.",
       },
     },
     captureMode,
@@ -258,7 +290,7 @@ export async function promptPipelineConfig(
       appName,
       shortDescription,
       themePreset: activeSaved?.marketing?.themePreset || "clean-light",
-      accentColor: activeSaved?.marketing?.accentColor || "#1E3A8A",
+      accentColor: activeSaved?.marketing?.accentColor || (targetPlatform === "ios" ? "#007AFF" : "#1E3A8A"),
     },
   };
 

@@ -108,6 +108,8 @@ Choose the workflow that fits your release process. Complete flags, API routes, 
 
 ### Capture & Copy Pipeline Details
 
+- **Dual-Platform Device Auto-Detection:** Automatically discovers booted iOS Simulators (`xcrun simctl`), physical iPhones (`devicectl` / `idevice_id`), and Android phones/emulators (`adb devices`). On macOS with an iPhone connected, it automatically chooses iOS without launching Android ADB.
+- **Smart User-Interaction Handshake:** When running the autonomous pipeline (`agent-executor.ts`), if the app lands on a Login, OTP, 2FA, or onboarding screen without automated credentials, the AI gracefully pauses, displays an interactive alert, waits for the operator to log in on device, and seamlessly continues auto-navigating.
 - **Local UI-Metadata Copy Engine (Default):** `manual-operator.ts` and `vision-copywriter.ts` extract visible on-screen UI hierarchy text (`slide-*.meta.json` via `uiautomator`) and derive screen-specific labels and headlines offline with no external API keys required.
 - **Optional Cloud Vision Copywriting:** Add `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` in `.env` (see `.env.example`) to use external vision models instead of the offline engine.
 - **Cross-Platform Sanitization (`scripts/system-bar-cropper.ts`):** Removes Android status bar icons, preserves bottom navigation tabs, extends the clean header seamlessly to Apple's `1320/2868` screen aspect (`1080×2347`) with no black letterbox padding, and composites a contrast-aware `9:41` status bar.

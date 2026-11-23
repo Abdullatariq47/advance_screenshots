@@ -1,10 +1,10 @@
-import { processScreenshotCrossPlatform } from "./system-bar-cropper.js";
 // scripts/agent-executor.ts
 import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
+import { processScreenshotCrossPlatform } from "./system-bar-cropper.js";
 import {
   dumpCurrentUi,
   findInputForEmail,
@@ -17,17 +17,22 @@ import {
   hasValidationErrors,
   identifyScreen,
   isLoginScreen,
-  isLoginScreenReady,
   waitForUiCondition,
-  DetectedScreenType
 } from "./ui-inspector.js";
 import { AdbNavigationWatcher } from "./adb-navigation-watcher.js";
 import { detectActivePackage } from "./interactive-prompt.js";
+import {
+  detectAllConnectedDevices,
+  captureDeviceScreenshot,
+  ConnectedDevice,
+  getAdbPath
+} from "./device-detector.js";
 
-function parseArgs(): { configPath: string; projectDir?: string; coldRestart: boolean } {
+function parseArgs(): { configPath: string; projectDir?: string; coldRestart: boolean; platform?: "ios" | "android" } {
   const args = process.argv.slice(2);
   let configPath = path.resolve(process.cwd(), "pipeline.config.json");
   let projectDir: string | undefined;
+  let platform: "ios" | "android" | undefined;
   const coldRestart = args.includes("--cold-restart") || args.includes("--restart");
 
   for (let i = 0; i < args.length; i++) {
@@ -37,43 +42,12 @@ function parseArgs(): { configPath: string; projectDir?: string; coldRestart: bo
     if (args[i] === "--projectDir" && args[i + 1]) {
       projectDir = path.resolve(process.cwd(), args[i + 1]);
     }
-  }
-  return { configPath, projectDir, coldRestart };
-}
-
-function getAdbPath(): string {
-  try {
-    execSync("adb version", { stdio: "ignore" });
-    return "adb";
-  } catch {}
-
-  const candidates = [
-    path.join(process.env.LOCALAPPDATA || "", "Android/Sdk/platform-tools/adb.exe"),
-    path.join(process.env.ANDROID_HOME || "", "platform-tools/adb.exe"),
-    path.join(process.env.ANDROID_SDK_ROOT || "", "platform-tools/adb.exe"),
-    path.join(process.env.HOME || "", "Library/Android/sdk/platform-tools/adb"),
-    path.join(process.env.HOME || "", "Android/Sdk/platform-tools/adb")
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      return `"${candidate}"`;
+    if (args[i] === "--platform" && args[i + 1]) {
+      const p = args[i + 1].trim().toLowerCase();
+      if (p === "ios" || p === "android") platform = p;
     }
   }
-
-  return "adb";
-}
-
-function checkLiveDevices(adbCmd: string): { hasAndroidDevice: boolean; deviceName?: string } {
-  try {
-    const adbOutput = execSync(`${adbCmd} devices`, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
-    const lines = adbOutput.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("List of devices"));
-    const active = lines.find(l => l.endsWith("device"));
-    if (active) {
-      return { hasAndroidDevice: true, deviceName: active.split(/\s+/)[0] };
-    }
-  } catch {}
-  return { hasAndroidDevice: false };
+  return { configPath, projectDir, coldRestart, platform };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,22 +55,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function saveDualScreenshot(
-  adbCmd: string,
+  targetDevice: ConnectedDevice,
   slideIndex: number,
   projectScreenshotsDir: string,
-  templateScreenshotsDir: string,
-  sourcePlatform: "android" | "ios" = "android"
+  templateScreenshotsDir: string
 ): Promise<boolean> {
   const fileName = `slide-${slideIndex}.png`;
   const projectDest = path.join(projectScreenshotsDir, fileName);
   const templateDest = path.join(templateScreenshotsDir, fileName);
 
   try {
-    execSync(`${adbCmd} shell screencap -p /sdcard/temp_screen.png`, { stdio: "ignore" });
-    execSync(`${adbCmd} pull /sdcard/temp_screen.png "${projectDest}"`, { stdio: "ignore" });
-    try { execSync(`${adbCmd} shell rm -f /sdcard/temp_screen.png`, { stdio: "ignore" }); } catch {}
-
-    if (fs.existsSync(projectDest) && fs.statSync(projectDest).size > 1000) {
+    const snapOk = await captureDeviceScreenshot(targetDevice, projectDest);
+    if (snapOk && fs.existsSync(projectDest) && fs.statSync(projectDest).size > 1000) {
       fs.copyFileSync(projectDest, templateDest);
 
       // Auto-generate store-sanitized iOS and Android variants
@@ -105,7 +75,14 @@ async function saveDualScreenshot(
       const templateIosDest = path.join(templateScreenshotsDir, `slide-${slideIndex}-ios.png`);
       const templateAndroidDest = path.join(templateScreenshotsDir, `slide-${slideIndex}-android.png`);
 
-      await processScreenshotCrossPlatform(projectDest, projectIosDest, projectAndroidDest, sourcePlatform, "current_screen.xml");
+      await processScreenshotCrossPlatform(
+        projectDest,
+        projectIosDest,
+        projectAndroidDest,
+        targetDevice.platform,
+        targetDevice.platform === "android" ? "current_screen.xml" : undefined
+      );
+
       if (fs.existsSync(projectIosDest)) fs.copyFileSync(projectIosDest, templateIosDest);
       if (fs.existsSync(projectAndroidDest)) fs.copyFileSync(projectAndroidDest, templateAndroidDest);
 
@@ -117,6 +94,19 @@ async function saveDualScreenshot(
   return false;
 }
 
+async function promptUserForInteraction(reason: string, screenState: string): Promise<boolean> {
+  console.log(`\n==========================================================`);
+  console.log(`🔔 [Action Required] ${reason}`);
+  console.log(`   Screen State: [${screenState.toUpperCase()}]`);
+  console.log(`   👉 Please complete this step on your device screen.`);
+  console.log(`==========================================================`);
+  const rl = readline.createInterface({ input, output });
+  const ans = await rl.question(`Press [ENTER] once you have reached the main app screen (or 'q' to quit): `);
+  rl.close();
+
+  return ans.trim().toLowerCase() !== "q";
+}
+
 async function performValidatedLogin(
   adbCmd: string,
   email: string,
@@ -125,30 +115,27 @@ async function performValidatedLogin(
 ): Promise<boolean> {
   console.log(`\n🔐 Performing Screen-Aware Auto-Login for [${email}]...`);
 
-  // Step 1: Check if the screen is actually the Login screen
   let currentNodes = dumpCurrentUi(adbCmd);
   let currentScreen = identifyScreen(currentNodes);
   console.log(`   • Current detected screen state: [${currentScreen.toUpperCase()}]`);
 
-  // If already on Dashboard, login is already fulfilled!
   if (currentScreen === "dashboard") {
     console.log(`   ✓ [Screen Check] App is already authenticated and on Dashboard.`);
     return true;
   }
 
-  // If on onboarding or welcome, wait or navigate
   if (currentScreen !== "login") {
     console.log(`   • Waiting for Login screen to be confirmed...`);
     const ready = await waitForUiCondition(
       adbCmd,
       nodes => identifyScreen(nodes) === "login",
-      15000,
+      10000,
       600
     );
 
     if (!ready.success) {
-      console.error(`   ❌ [Screen Check Failed] Current screen is [${identifyScreen(dumpCurrentUi(adbCmd))}], not Login screen.`);
-      return false;
+      console.warn(`   ⚠ Login screen not confirmed. Asking user for interaction...`);
+      return promptUserForInteraction("User Authentication Needed", identifyScreen(dumpCurrentUi(adbCmd)));
     }
   }
 
@@ -165,27 +152,24 @@ async function performValidatedLogin(
     const passNode = findInputForPassword(nodes);
 
     if (!emailNode || !passNode) {
-      console.warn(`   ⚠ Could not identify EditText fields. Retrying UI dump...`);
-      await sleep(800);
-      continue;
+      console.warn(`   ⚠ Could not automatically identify EditText fields.`);
+      break;
     }
 
-    console.log(`   • Found Email EditText at (${emailNode.bounds.cx}, ${emailNode.bounds.cy}). Typing...`);
+    console.log(`   • Found Email field at (${emailNode.bounds.cx}, ${emailNode.bounds.cy}). Typing...`);
     clearAndInputText(adbCmd, emailNode.bounds.cx, emailNode.bounds.cy, email);
     await sleep(350);
     minimizeKeyboard(adbCmd);
     await sleep(400);
 
-    // Re-dump after keyboard is minimized to cleanly locate password field
     nodes = dumpCurrentUi(adbCmd);
     const passNodeFresh = findInputForPassword(nodes) || passNode;
-    console.log(`   • Found Password EditText at (${passNodeFresh.bounds.cx}, ${passNodeFresh.bounds.cy}). Typing...`);
+    console.log(`   • Found Password field at (${passNodeFresh.bounds.cx}, ${passNodeFresh.bounds.cy}). Typing...`);
     clearAndInputText(adbCmd, passNodeFresh.bounds.cx, passNodeFresh.bounds.cy, pass);
     await sleep(350);
     minimizeKeyboard(adbCmd);
     await sleep(500);
 
-    // Validate inputs
     nodes = dumpCurrentUi(adbCmd);
     const verifyEmail = findInputForEmail(nodes);
     const verifyPass = findInputForPassword(nodes);
@@ -198,21 +182,15 @@ async function performValidatedLogin(
       isFilled = true;
       console.log(`   ✓ [Validation Passed] Fields successfully filled and verified.`);
     } else {
-      console.warn(`   ⚠ [Validation Warning] Field contents not confirmed yet. Retrying input... (${maxAttempts} attempts remaining)`);
-      if (errors.length > 0) {
-        console.warn(`     Errors found: ${errors.join(", ")}`);
-      }
-      await sleep(600);
+      await sleep(500);
     }
   }
 
-  // CRITICAL GUARD: NEVER TAP LOGIN IF NOT FILLED!
+  // If automated typing did not work cleanly, hand off gracefully to user
   if (!isFilled) {
-    console.error(`   ❌ [Input Failed] Fields could not be filled. Halting before login button tap to prevent submitting empty form.`);
-    return false;
+    return promptUserForInteraction("Credentials Entry Needed", "LOGIN");
   }
 
-  // 2. Click Login button with instant navigation event listener
   let nodes = dumpCurrentUi(adbCmd);
   const loginBtn = findButtonByKeywords(nodes, /login|sign in|continue|submit/i);
 
@@ -224,24 +202,22 @@ async function performValidatedLogin(
   } else {
     const { width: sw, height: sh } = getDeviceScreenDimensions(adbCmd);
     const fallbackY = Math.round(sh * 0.81);
-    console.log(`   • Tapping Login button fallback (${Math.round(sw / 2)}, ${fallbackY})...`);
     await watcher.executeAndWaitForNavigation(() => {
       execSync(`${adbCmd} shell input tap ${Math.round(sw / 2)} ${fallbackY}`, { stdio: "ignore" });
     }, 500, 7000);
   }
 
-  // 3. Wait for response and validate screen transition
+  // Validate screen transition
   console.log(`   • Validating screen transition...`);
   let loginSuccess = false;
 
-  for (let wait = 0; wait < 10; wait++) {
+  for (let wait = 0; wait < 8; wait++) {
     await sleep(1000);
     nodes = dumpCurrentUi(adbCmd);
 
-    // Check for intermediate skip / continue buttons
     const skipBtn = findButtonByKeywords(nodes, /skip to dashboard|skip|continue|check in|allow|ok|dismiss/i);
     if (skipBtn) {
-      console.log(`   • Tapping intermediate prompt [${skipBtn.contentDesc || skipBtn.text}] at (${skipBtn.bounds.cx}, ${skipBtn.bounds.cy})...`);
+      console.log(`   • Tapping intermediate prompt [${skipBtn.contentDesc || skipBtn.text}]...`);
       await watcher.executeAndWaitForNavigation(() => {
         execSync(`${adbCmd} shell input tap ${skipBtn.bounds.cx} ${skipBtn.bounds.cy}`, { stdio: "ignore" });
       }, 500, 4000);
@@ -250,78 +226,109 @@ async function performValidatedLogin(
       break;
     }
 
-    // Check if we are still on the login screen
     if (!isLoginScreen(nodes)) {
       loginSuccess = true;
-      console.log(`   ✓ [Screen Transition Verified] Successfully left Login screen!`);
+      console.log(`   ✓ [Screen Transition Verified] Successfully transitioned past Login screen!`);
       break;
-    }
-
-    const errors = hasValidationErrors(nodes);
-    if (errors.length > 0) {
-      console.warn(`   ⚠ Server or field error detected: ${errors.join(", ")}`);
     }
   }
 
-  // If still on login screen, offer interactive fallback if terminal attached
-  if (!loginSuccess && process.stdin.isTTY) {
-    console.log(`\n==========================================================`);
-    console.log(`⚠ [Validation Alert] App is still on Login screen.`);
-    console.log(`   You can complete the login manually on your phone screen.`);
-    console.log(`==========================================================`);
-    const rl = readline.createInterface({ input, output });
-    const ans = await rl.question(`Press [ENTER] once you have reached Dashboard (or 'q' to abort): `);
-    rl.close();
-
-    if (ans.trim().toLowerCase() !== "q") {
-      await sleep(1000);
-      const postNodes = dumpCurrentUi(adbCmd);
-      if (!isLoginScreen(postNodes)) {
-        loginSuccess = true;
-        console.log(`   ✓ [Manual Login Verified] Confirmed on Dashboard!`);
-      }
-    }
+  if (!loginSuccess) {
+    return promptUserForInteraction("Login / 2FA / OTP Verification Needed", identifyScreen(dumpCurrentUi(adbCmd)));
   }
 
   return loginSuccess;
 }
 
-async function main() {
-  const { configPath, projectDir, coldRestart } = parseArgs();
-  if (!fs.existsSync(configPath)) {
-    console.error(`[Agent Executor] Configuration file not found at ${configPath}`);
-    process.exit(1);
+/**
+ * Handles Autonomous Navigation on iOS Devices / Simulators.
+ */
+async function runIosAutonomousWorkflow(
+  device: ConnectedDevice,
+  config: any,
+  projectScreenshotsDir: string,
+  templateScreenshotsDir: string
+) {
+  console.log(`\n==========================================================`);
+  console.log(`Running iOS Autonomous Pipeline on: ${device.name}`);
+  console.log(`App Bundle ID: ${config.app.appId}`);
+  console.log(`==========================================================\n`);
+
+  let slideIndex = 1;
+
+  // 1. Launch App
+  if (device.type === "simulator") {
+    console.log(`[Screen ${slideIndex}] Launching ${config.app.appId} on iOS Simulator...`);
+    try {
+      execSync(`xcrun simctl launch ${device.id || "booted"} ${config.app.appId}`, { stdio: "ignore" });
+      await sleep(2500);
+    } catch {
+      console.log(`   ℹ Simulator launch notice: please ensure app is installed on simulator.`);
+    }
+  } else {
+    console.log(`[Screen ${slideIndex}] Please tap "${config.app.appId}" on your iPhone screen to open it.`);
   }
 
-  const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  const adbCmd = getAdbPath();
-  const { hasAndroidDevice, deviceName } = checkLiveDevices(adbCmd);
+  // Capture Landing / Splash Screen
+  await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+  console.log(`   ✓ [Initial Screen] Captured -> slide-${slideIndex}.png`);
+  slideIndex++;
 
-  if (!hasAndroidDevice || !deviceName) {
-    console.error(`[Agent Executor] No Android device connected via ADB.`);
-    process.exit(1);
+  // 2. Auth / Onboarding Check
+  if (config.app.auth?.hasAuth) {
+    const proceed = await promptUserForInteraction("Authentication / Sign-In Check", "LOGIN / ONBOARDING");
+    if (!proceed) {
+      console.log("Autonomous workflow stopped by user.");
+      return;
+    }
+    await sleep(1000);
+    await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+    console.log(`   ✓ [Dashboard Screen] Captured -> slide-${slideIndex}.png`);
+    slideIndex++;
   }
 
-  // Start real-time ADB Navigation Event Stream
+  // 3. Navigate through remaining screens with smart guidance
+  const rl = readline.createInterface({ input, output });
+  const maxScreens = Math.min(Math.max(config.captureGoals?.length || 4, 3), 6);
+
+  console.log(`\n👉 Autonomous Explorer: Capture up to ${maxScreens} key screens of your app.`);
+  while (slideIndex <= maxScreens) {
+    const goal = config.captureGoals?.[slideIndex - 1]?.target || `Screen ${slideIndex}`;
+    const ans = await rl.question(`\n[Screen ${slideIndex}] Navigate on your iPhone to [${goal}] and press [ENTER] (or 'done' to finish): `);
+    const trimmed = ans.trim().toLowerCase();
+
+    if (trimmed === "done" || trimmed === "d" || trimmed === "q") {
+      break;
+    }
+
+    await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+    console.log(`   ✓ [${goal}] Captured -> slide-${slideIndex}.png`);
+    slideIndex++;
+  }
+  rl.close();
+
+  console.log(`\n==========================================================`);
+  console.log(`🎉 iOS Capture Complete! Total ${slideIndex - 1} screenshots saved in:`);
+  console.log(`📁 ${projectScreenshotsDir}`);
+  console.log(`==========================================================\n`);
+}
+
+/**
+ * Handles Autonomous Navigation on Android Devices / Emulators.
+ */
+async function runAndroidAutonomousWorkflow(
+  device: ConnectedDevice,
+  config: any,
+  projectScreenshotsDir: string,
+  templateScreenshotsDir: string,
+  coldRestart: boolean
+) {
+  const adbCmd = device.adbCmd || getAdbPath();
   const watcher = new AdbNavigationWatcher(adbCmd);
   watcher.start();
   console.log(`⚡ [Real-Time Engine] ADB event stream active (Zero-latency navigation detection).`);
 
   try {
-    // Set up project screenshot paths
-    const resolvedProjectDir = projectDir || path.resolve(process.cwd(), "projects", config.app.appId);
-    const projectScreenshotsDir = path.join(resolvedProjectDir, "screenshots");
-    const templateScreenshotsDir = path.resolve(process.cwd(), "template/public/screenshots");
-
-    if (!fs.existsSync(projectScreenshotsDir)) fs.mkdirSync(projectScreenshotsDir, { recursive: true });
-    if (!fs.existsSync(templateScreenshotsDir)) fs.mkdirSync(templateScreenshotsDir, { recursive: true });
-
-    console.log(`\n==========================================================`);
-    console.log(`Running Pipeline on Device: ${deviceName}`);
-    console.log(`Target: ${config.app.appId}`);
-    console.log(`Saving to: ${projectScreenshotsDir}`);
-    console.log(`==========================================================\n`);
-
     let slideIndex = 1;
     const activePackage = detectActivePackage(adbCmd);
     const isAlreadyRunning = Boolean(activePackage && activePackage === config.app.appId);
@@ -330,231 +337,172 @@ async function main() {
       console.log(`[Live App Detected] "${config.app.appId}" is already open on screen.`);
       console.log(`   ⚡ In-Flight Attach: Preserving your active screen, login session & data.`);
 
-      await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
+      await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
       console.log(`   ✓ [Active Screen] Captured -> slide-${slideIndex}.png`);
       slideIndex++;
     } else {
-      // Ensure clean state if authentication is requested so splash & pristine login are guaranteed
       if (config.app.auth?.hasAuth && coldRestart) {
         console.log(`🧹 Clearing app data to ensure pristine onboarding & login capture...`);
-        try { execSync(`${adbCmd} shell pm clear ${config.app.appId}`, { stdio: "ignore" }); } catch {}
+        try { execSync(`${adbCmd} -s ${device.id} shell pm clear ${config.app.appId}`, { stdio: "ignore" }); } catch {}
       }
 
-      // 1. Splash Screen
       console.log(`[Screen ${slideIndex}] Launching app for Splash Screen capture...`);
-      try { execSync(`${adbCmd} shell am force-stop ${config.app.appId}`, { stdio: "ignore" }); } catch {}
-      
+      try { execSync(`${adbCmd} -s ${device.id} shell am force-stop ${config.app.appId}`, { stdio: "ignore" }); } catch {}
+
       await watcher.executeAndWaitForNavigation(() => {
-        execSync(`${adbCmd} shell monkey -p ${config.app.appId} -c android.intent.category.LAUNCHER 1`, { stdio: "ignore" });
+        execSync(`${adbCmd} -s ${device.id} shell monkey -p ${config.app.appId} -c android.intent.category.LAUNCHER 1`, { stdio: "ignore" });
       }, 600, 10000);
 
-      await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
+      await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
       console.log(`   ✓ [Splash Screen] Captured -> slide-${slideIndex}.png`);
       slideIndex++;
     }
 
-    // Check if app is already past login
+    // Inspect landing screen state
     const currentNodes = dumpCurrentUi(adbCmd);
     const currentScreenType = identifyScreen(currentNodes);
-    const alreadyAuthenticated = isAlreadyRunning && currentScreenType !== "login" && currentScreenType !== "welcome" && currentScreenType !== "onboarding";
+    const needsAuthCheck = isLoginScreen(currentNodes) || currentScreenType === "login" || currentScreenType === "welcome" || currentScreenType === "onboarding";
 
-    if (alreadyAuthenticated) {
-      console.log(`\n✓ [Active Session Verified] App is already authenticated (Screen: [${currentScreenType.toUpperCase()}]). Skipping login flow.`);
-    } else if (config.app.auth?.hasAuth) {
-      // Dynamic screen-aware transition to pristine Login screen
-      console.log(`\n🔍 Identifying landing screen after launch...`);
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const nodes = dumpCurrentUi(adbCmd);
-        const screen = identifyScreen(nodes);
-        console.log(`   • Detected Screen: [${screen.toUpperCase()}]`);
+    if (needsAuthCheck) {
+      console.log(`\n🔍 Landing Screen requires user interaction: [${currentScreenType.toUpperCase()}]`);
 
-        if (screen === "login") {
-          console.log(`   ✓ [Screen Check Passed] Confirmed on Login Screen.`);
-          break;
+      // Attempt automated skip of onboarding if skip button exists
+      if (currentScreenType === "onboarding") {
+        const skipBtn = currentNodes.find(n => n.clickable && (/skip/i.test(n.contentDesc) || /skip/i.test(n.text)));
+        if (skipBtn) {
+          console.log(`   • [Onboarding Detected] Tapping [Skip]...`);
+          execSync(`${adbCmd} -s ${device.id} shell input tap ${skipBtn.bounds.cx} ${skipBtn.bounds.cy}`, { stdio: "ignore" });
+          await sleep(1000);
         }
-
-        if (screen === "onboarding") {
-          const skipBtn = nodes.find(n => n.clickable && (/skip/i.test(n.contentDesc) || /skip/i.test(n.text)));
-          if (skipBtn) {
-            console.log(`   • [Onboarding Detected] Tapping [Skip] at (${skipBtn.bounds.cx}, ${skipBtn.bounds.cy})...`);
-            execSync(`${adbCmd} shell input tap ${skipBtn.bounds.cx} ${skipBtn.bounds.cy}`, { stdio: "ignore" });
-            await sleep(1000);
-            continue;
-          }
-        }
-
-        if (screen === "welcome") {
-          const accBtn = nodes.find(n =>
-            n.clickable && (/i have an account/i.test(n.contentDesc) || /log in|sign in/i.test(n.contentDesc) || /i have an account/i.test(n.text))
-          );
-          if (accBtn) {
-            console.log(`   • [Welcome Detected] Tapping [${accBtn.contentDesc || accBtn.text}] at (${accBtn.bounds.cx}, ${accBtn.bounds.cy})...`);
-            execSync(`${adbCmd} shell input tap ${accBtn.bounds.cx} ${accBtn.bounds.cy}`, { stdio: "ignore" });
-            await sleep(1000);
-            continue;
-          }
-        }
-
-        if (screen === "permission_dialog") {
-          const allowBtn = nodes.find(n =>
-            n.clickable && (/while using the app|allow/i.test(n.text) || /while using the app|allow/i.test(n.contentDesc))
-          );
-          if (allowBtn) {
-            console.log(`   • [Permission Detected] Dismissing dialog...`);
-            execSync(`${adbCmd} shell input tap ${allowBtn.bounds.cx} ${allowBtn.bounds.cy}`, { stdio: "ignore" });
-            await sleep(800);
-            continue;
-          }
-        }
-
-        if (screen === "dashboard") {
-          console.log(`   ℹ [Dashboard Detected] App is already authenticated.`);
-          break;
-        }
-
-        await sleep(800);
       }
 
-      // 2. Login Screen (Dynamic wait until pristine login screen settles BEFORE putting text into fields)
-      console.log(`\n[Screen ${slideIndex}] Verifying pristine Login Screen (before text input)...`);
-      await waitForUiCondition(adbCmd, nodes => identifyScreen(nodes) === "login", 12000, 800);
-      await sleep(600);
-      await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
-      console.log(`   ✓ [Login Screen (Pristine)] Captured -> slide-${slideIndex}.png`);
-      slideIndex++;
-
-      // 3. Screen-Checked Validated Login
       const email = process.env.APP_LOGIN_EMAIL || config.app.auth?.credentials?.email || "";
       const password = process.env.APP_LOGIN_PASSWORD || config.app.auth?.credentials?.password || "";
-      if (email && password) {
-        const loginOk = await performValidatedLogin(adbCmd, email, password, watcher);
 
+      if (email && password) {
+        // Pristine capture before filling
+        await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+        console.log(`   ✓ [Login Screen (Pristine)] Captured -> slide-${slideIndex}.png`);
+        slideIndex++;
+
+        const loginOk = await performValidatedLogin(adbCmd, email, password, watcher);
         if (!loginOk) {
-          console.error(`\n❌ [Validation Failed] Screen did not transition to Dashboard.`);
-          console.error(`   Halting screenshot capture to prevent generating invalid screens.`);
-          process.exit(1);
+          await promptUserForInteraction("User Login Required", "LOGIN");
         }
       } else {
-        console.log(`   ⚠ No credentials supplied. Please sign in manually on device if needed.`);
+        // No credentials in config -> ask user to interact directly on phone!
+        await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+        console.log(`   ✓ [Login / Welcome Screen] Captured -> slide-${slideIndex}.png`);
+        slideIndex++;
+
+        await promptUserForInteraction("Sign-In / Form Interaction Needed", currentScreenType);
       }
 
-      // 4. Dashboard Screen
-      console.log(`\n[Screen ${slideIndex}] Capturing Dashboard Screen...`);
-      await waitForUiCondition(adbCmd, nodes => identifyScreen(nodes) === "dashboard", 12000, 800);
-      await sleep(800);
-      await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
+      // Capture Authenticated Dashboard
+      await sleep(1000);
+      await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
       console.log(`   ✓ [Dashboard Screen] Captured -> slide-${slideIndex}.png`);
       slideIndex++;
     } else {
-      // App does not require auth - captures fresh home/main screen
-      console.log(`\n[Screen ${slideIndex}] Waiting for Main / Home Screen to settle...`);
-      await waitForUiCondition(adbCmd, nodes => nodes.length > 3, 10000, 800);
-      await sleep(800);
-      await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
+      console.log(`\n✓ [Main Screen Verified] App landed directly on authenticated screen: [${currentScreenType.toUpperCase()}].`);
+      await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
       console.log(`   ✓ [Main / Home Screen] Captured -> slide-${slideIndex}.png`);
       slideIndex++;
     }
 
-    // 5. Navigation Bar Tabs or Guided Navigation
-    if (config.captureMode === "guided") {
-      const rl = readline.createInterface({ input, output });
-      console.log(`\n👉 Guided Mode: Navigate to each screen on your phone, then press [ENTER]`);
-      for (let i = 0; i < 4; i++) {
-        const ans = await rl.question(`\n[Screen ${slideIndex}] Press [ENTER] to capture current screen (or 'q' to stop): `);
-        if (ans.trim().toLowerCase() === "q") break;
+    // 4. Explore Remaining Tabs & Screens
+    console.log(`\n🔍 Locating Bottom Navigation Tabs...`);
+    const { width: screenWidth, height: screenHeight } = getDeviceScreenDimensions(adbCmd);
+    const uiNodes = dumpCurrentUi(adbCmd);
+    const tabs = findBottomNavTabs(uiNodes, screenHeight);
 
-        await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
-        console.log(`   ✓ Captured screen -> slide-${slideIndex}.png`);
-        slideIndex++;
+    if (tabs.length > 0) {
+      console.log(`   ✓ Detected ${tabs.length} tabs dynamically:`);
+      for (const t of tabs) {
+        const label = (t.contentDesc || t.text || "Tab").split("\n")[0].trim();
+        console.log(`     • [${label}] at (${t.bounds.cx}, ${t.bounds.cy})`);
       }
-      rl.close();
-    } else {
-      console.log(`\n🔍 Locating Bottom Navigation Tabs...`);
-      const { width: screenWidth, height: screenHeight } = getDeviceScreenDimensions(adbCmd);
-      const uiNodes = dumpCurrentUi(adbCmd);
-      const tabs = findBottomNavTabs(uiNodes, screenHeight);
 
-      if (tabs.length > 0) {
-        console.log(`   ✓ Detected ${tabs.length} tabs dynamically:`);
-        for (const t of tabs) {
-          const label = (t.contentDesc || t.text || "Tab").split("\n")[0].trim();
-          console.log(`     • [${label}] at (${t.bounds.cx}, ${t.bounds.cy})`);
+      for (let i = 0; i < tabs.length; i++) {
+        const tab = tabs[i];
+        const rawName = tab.contentDesc || tab.text || `Tab ${i + 1}`;
+        const tabName = rawName.split("\n")[0].trim();
+
+        if (/home/i.test(tabName) && slideIndex > 3) {
+          continue;
         }
 
-        for (let i = 0; i < tabs.length; i++) {
-          const tab = tabs[i];
-          const rawName = tab.contentDesc || tab.text || `Tab ${i + 1}`;
-          const tabName = rawName.split("\n")[0].trim();
+        console.log(`\n[Screen ${slideIndex}] Tapping Navigation Tab: [${tabName}]...`);
 
-          // Skip Home tab if we already captured Dashboard right before tabs
-          if (/home/i.test(tabName) && slideIndex > 3) {
-            console.log(`   • Skipping [${tabName}] tab (already captured as Dashboard).`);
-            continue;
-          }
+        await watcher.executeAndWaitForNavigation(() => {
+          execSync(`${adbCmd} -s ${device.id} shell input tap ${tab.bounds.cx} ${tab.bounds.cy}`, { stdio: "ignore" });
+        }, 450, 4000);
 
-          console.log(`\n[Screen ${slideIndex}] Tapping Navigation Tab: [${tabName}]...`);
+        await sleep(600);
+        await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+        console.log(`   ✓ [${tabName}] Captured -> slide-${slideIndex}.png`);
+        slideIndex++;
 
-          // Instant navigation event detection
-          await watcher.executeAndWaitForNavigation(() => {
-            execSync(`${adbCmd} shell input tap ${tab.bounds.cx} ${tab.bounds.cy}`, { stdio: "ignore" });
-          }, 450, 4000);
+        // Sub-screen handling for calls/dialer
+        if (/call/i.test(tabName)) {
+          const callNodes = dumpCurrentUi(adbCmd);
+          const dialBtn = callNodes.find(n => n.clickable && (/dial/i.test(n.contentDesc) || /dial/i.test(n.text)));
+          if (dialBtn) {
+            console.log(`   • Found Dialer keypad button. Tapping...`);
+            await watcher.executeAndWaitForNavigation(() => {
+              execSync(`${adbCmd} -s ${device.id} shell input tap ${dialBtn.bounds.cx} ${dialBtn.bounds.cy}`, { stdio: "ignore" });
+            }, 450, 4000);
 
-          await sleep(600);
-          await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
-          console.log(`   ✓ [${tabName}] Captured -> slide-${slideIndex}.png`);
-          slideIndex++;
-
-          // Special sub-screen capture: If this is the "Calls" tab, also capture the dialer screen!
-          if (/call/i.test(tabName)) {
-            console.log(`   🔍 [Screen Check] Detected Calls tab! Checking for Dialer keypad button...`);
             await sleep(600);
-            const callNodes = dumpCurrentUi(adbCmd);
-            const dialBtn = callNodes.find(n => n.clickable && (/dial/i.test(n.contentDesc) || /dial/i.test(n.text)));
-            if (dialBtn) {
-              console.log(`   • Found Dialer button at (${dialBtn.bounds.cx}, ${dialBtn.bounds.cy}). Tapping...`);
-              await watcher.executeAndWaitForNavigation(() => {
-                execSync(`${adbCmd} shell input tap ${dialBtn.bounds.cx} ${dialBtn.bounds.cy}`, { stdio: "ignore" });
-              }, 450, 4000);
+            await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+            console.log(`   ✓ [Dialer Keypad Screen] Captured -> slide-${slideIndex}.png`);
+            slideIndex++;
 
+            try {
+              execSync(`${adbCmd} -s ${device.id} shell input keyevent 4`, { stdio: "ignore" });
               await sleep(600);
-              const dialerNodes = dumpCurrentUi(adbCmd);
-              const dialerState = identifyScreen(dialerNodes);
-              console.log(`   • [Screen Check Passed] Keypad state: [${dialerState.toUpperCase()}]`);
-
-              await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
-              console.log(`   ✓ [Dialer Keypad Screen] Captured -> slide-${slideIndex}.png`);
-              slideIndex++;
-
-              // Return back to main calls screen
-              try {
-                console.log(`   • Pressing Back to return from Dialer...`);
-                execSync(`${adbCmd} shell input keyevent 4`, { stdio: "ignore" });
-                await sleep(600);
-              } catch {}
-            }
+            } catch {}
           }
         }
-      } else {
-        console.log(`   • No text labels detected on bottom bar, checking dynamic interactive touch points...`);
-        const bottomBarY = Math.round(screenHeight * 0.94);
-        const slotCount = Math.min(Math.max(config.captureGoals?.length || 4, 3), 5);
-        const dynamicSlots: Array<{ name: string; x: number; y: number }> = [];
+      }
+    } else {
+      // No bottom tabs: look for clickable content cards or ask user
+      console.log(`   • No bottom tabs found. Inspecting clickable cards and content list...`);
+      const clickableCards = uiNodes.filter(n =>
+        n.clickable &&
+        n.bounds.cy > screenHeight * 0.2 &&
+        n.bounds.cy < screenHeight * 0.8 &&
+        (n.bounds.x2 - n.bounds.x1) > screenWidth * 0.4
+      );
 
-        for (let s = 1; s <= slotCount; s++) {
-          const x = Math.round((s - 0.5) * (screenWidth / slotCount));
-          const goalName = config.captureGoals?.[s]?.target || `Section ${s}`;
-          dynamicSlots.push({ name: goalName, x, y: bottomBarY });
-        }
+      if (clickableCards.length > 0) {
+        const targetCard = clickableCards[0];
+        console.log(`   • Navigating into detail card at (${targetCard.bounds.cx}, ${targetCard.bounds.cy})...`);
 
-        for (const slot of dynamicSlots) {
-          console.log(`\n[Screen ${slideIndex}] Probing dynamic navigation point: [${slot.name}] (${slot.x}, ${slot.y})...`);
+        await watcher.executeAndWaitForNavigation(() => {
+          execSync(`${adbCmd} -s ${device.id} shell input tap ${targetCard.bounds.cx} ${targetCard.bounds.cy}`, { stdio: "ignore" });
+        }, 450, 4000);
 
-          await watcher.executeAndWaitForNavigation(() => {
-            execSync(`${adbCmd} shell input tap ${slot.x} ${slot.y}`, { stdio: "ignore" });
-          }, 450, 4000);
+        await sleep(800);
+        await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+        console.log(`   ✓ [Detail View] Captured -> slide-${slideIndex}.png`);
+        slideIndex++;
 
-          await saveDualScreenshot(adbCmd, slideIndex, projectScreenshotsDir, templateScreenshotsDir, (config.app.platform as "android" | "ios") || "android");
-          console.log(`   ✓ [${slot.name}] Captured -> slide-${slideIndex}.png`);
+        // Return back
+        try {
+          execSync(`${adbCmd} -s ${device.id} shell input keyevent 4`, { stdio: "ignore" });
+          await sleep(600);
+        } catch {}
+      }
+
+      // If user is interactive and more screens can be captured, ask user
+      if (process.stdin.isTTY && slideIndex < 5) {
+        const rl = readline.createInterface({ input, output });
+        const ans = await rl.question(`\n[Screen ${slideIndex}] Navigate on your phone to any other screen to capture, then press [ENTER] (or 'done' to finish): `);
+        rl.close();
+        if (ans.trim().toLowerCase() !== "done" && ans.trim().toLowerCase() !== "d") {
+          await saveDualScreenshot(device, slideIndex, projectScreenshotsDir, templateScreenshotsDir);
+          console.log(`   ✓ Captured screen -> slide-${slideIndex}.png`);
           slideIndex++;
         }
       }
@@ -566,6 +514,43 @@ async function main() {
     console.log(`==========================================================\n`);
   } finally {
     watcher.stop();
+  }
+}
+
+async function main() {
+  const { configPath, projectDir: argProjectDir, coldRestart, platform: argPlatform } = parseArgs();
+  if (!fs.existsSync(configPath)) {
+    console.error(`[Agent Executor] Configuration file not found at ${configPath}`);
+    process.exit(1);
+  }
+
+  const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  const requestedPlatform: "ios" | "android" = argPlatform || config?.app?.platform || (process.platform === "darwin" ? "ios" : "android");
+
+  const connectedDevices = detectAllConnectedDevices();
+  let targetDevice: ConnectedDevice | null = connectedDevices.find(d => d.platform === requestedPlatform) || connectedDevices[0] || null;
+
+  if (!targetDevice) {
+    console.error(`\n❌ [No Device Connected] No active ${requestedPlatform === "ios" ? "iPhone or iOS Simulator" : "Android phone or emulator"} found.`);
+    if (requestedPlatform === "ios") {
+      console.error("   👉 Please start an iOS Simulator (e.g. 'open -a Simulator') or connect an iPhone via USB.");
+    } else {
+      console.error("   👉 Please connect an Android phone with USB debugging or start an Android emulator.");
+    }
+    process.exit(1);
+  }
+
+  const resolvedProjectDir = argProjectDir || path.resolve(process.cwd(), "projects", config.app.appId);
+  const projectScreenshotsDir = path.join(resolvedProjectDir, "screenshots");
+  const templateScreenshotsDir = path.resolve(process.cwd(), "template/public/screenshots");
+
+  if (!fs.existsSync(projectScreenshotsDir)) fs.mkdirSync(projectScreenshotsDir, { recursive: true });
+  if (!fs.existsSync(templateScreenshotsDir)) fs.mkdirSync(templateScreenshotsDir, { recursive: true });
+
+  if (targetDevice.platform === "ios") {
+    await runIosAutonomousWorkflow(targetDevice, config, projectScreenshotsDir, templateScreenshotsDir);
+  } else {
+    await runAndroidAutonomousWorkflow(targetDevice, config, projectScreenshotsDir, templateScreenshotsDir, coldRestart);
   }
 }
 

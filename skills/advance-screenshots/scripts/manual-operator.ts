@@ -9,14 +9,29 @@ import { generateVisionMarketingCopy } from "./vision-copywriter.js";
 import { buildAppStoreScreenshotsJson } from "./generate-project-state.js";
 import { applyAutoThemeToProject } from "./auto-theme-detector.js";
 import { detectActivePackage, formatDefaultAppName } from "./interactive-prompt.js";
+import {
+  detectAllConnectedDevices,
+  getDefaultDevice,
+  captureDeviceScreenshot,
+  ConnectedDevice,
+  getAdbPath
+} from "./device-detector.js";
 
-function parseArgs(): { configPath: string; projectDir?: string; captureOnly: boolean; appId?: string; appName?: string } {
+function parseArgs(): {
+  configPath: string;
+  projectDir?: string;
+  captureOnly: boolean;
+  appId?: string;
+  appName?: string;
+  platform?: "ios" | "android";
+} {
   const args = process.argv.slice(2);
   let configPath = path.resolve(process.cwd(), "pipeline.config.json");
   let projectDir: string | undefined;
   let captureOnly = false;
   let appId: string | undefined;
   let appName: string | undefined;
+  let platform: "ios" | "android" | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--config" && args[i + 1]) {
@@ -31,46 +46,15 @@ function parseArgs(): { configPath: string; projectDir?: string; captureOnly: bo
     if (args[i] === "--appName" && args[i + 1]) {
       appName = args[i + 1].trim();
     }
+    if (args[i] === "--platform" && args[i + 1]) {
+      const p = args[i + 1].trim().toLowerCase();
+      if (p === "ios" || p === "android") platform = p;
+    }
     if (args[i] === "--captureOnly") {
       captureOnly = true;
     }
   }
-  return { configPath, projectDir, captureOnly, appId, appName };
-}
-
-function getAdbPath(): string {
-  try {
-    execSync("adb version", { stdio: "ignore" });
-    return "adb";
-  } catch {}
-
-  const candidates = [
-    path.join(process.env.LOCALAPPDATA || "", "Android/Sdk/platform-tools/adb.exe"),
-    path.join(process.env.ANDROID_HOME || "", "platform-tools/adb.exe"),
-    path.join(process.env.ANDROID_SDK_ROOT || "", "platform-tools/adb.exe"),
-    path.join(process.env.HOME || "", "Library/Android/sdk/platform-tools/adb"),
-    path.join(process.env.HOME || "", "Android/Sdk/platform-tools/adb")
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      return `"${candidate}"`;
-    }
-  }
-
-  return "adb";
-}
-
-function checkLiveDevices(adbCmd: string): { hasDevice: boolean; deviceName?: string } {
-  try {
-    const adbOutput = execSync(`${adbCmd} devices`, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
-    const lines = adbOutput.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("List of devices"));
-    const active = lines.find(l => l.endsWith("device"));
-    if (active) {
-      return { hasDevice: true, deviceName: active.split(/\s+/)[0] };
-    }
-  } catch {}
-  return { hasDevice: false };
+  return { configPath, projectDir, captureOnly, appId, appName, platform };
 }
 
 /**
@@ -109,47 +93,52 @@ function extractVisibleUiTexts(xmlPath: string): string[] {
 }
 
 async function runManualOperator() {
-  const { configPath, projectDir: argProjectDir, captureOnly, appId: argAppId, appName: argAppName } = parseArgs();
-  const adbCmd = getAdbPath();
-  const { hasDevice, deviceName } = checkLiveDevices(adbCmd);
-
-  if (!hasDevice) {
-    console.error("\n❌ [No Device Connected] Please connect an Android phone with USB debugging or start an emulator.");
-    process.exit(1);
-  }
+  const { configPath, projectDir: argProjectDir, captureOnly, appId: argAppId, appName: argAppName, platform: argPlatform } = parseArgs();
 
   let config: any = {};
-  if (!argAppId && fs.existsSync(configPath)) {
+  if (fs.existsSync(configPath)) {
     try {
       config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     } catch {}
   }
 
-  const detectedPkg = detectActivePackage(adbCmd);
+  const requestedPlatform: "ios" | "android" = argPlatform || config?.app?.platform || (process.platform === "darwin" ? "ios" : "android");
+  const connectedDevices = detectAllConnectedDevices();
+  let targetDevice: ConnectedDevice | null = connectedDevices.find(d => d.platform === requestedPlatform) || connectedDevices[0] || null;
+
+  if (!targetDevice) {
+    console.error(`\n❌ [No Device Connected] No active ${requestedPlatform === "ios" ? "iPhone or iOS Simulator" : "Android device or emulator"} found.`);
+    if (requestedPlatform === "ios") {
+      console.error("   👉 Please start an iOS Simulator (e.g. 'open -a Simulator') or connect an iPhone via USB.");
+    } else {
+      console.error("   👉 Please connect an Android phone with USB debugging or start an Android emulator.");
+    }
+    process.exit(1);
+  }
+
+  const isAndroid = targetDevice.platform === "android";
+  const adbCmd = isAndroid ? (targetDevice.adbCmd || getAdbPath()) : "";
+  const detectedPkg = isAndroid ? detectActivePackage(adbCmd) : null;
+
   const appId = argAppId || config?.app?.appId || detectedPkg || "my-app";
   const appName = argAppName || (argAppId ? formatDefaultAppName(argAppId) : config?.marketing?.appName) || (detectedPkg ? formatDefaultAppName(detectedPkg) : "App");
-
-  // Launch target package if explicitly specified via --appId
-  if (argAppId) {
-    try {
-      execSync(`${adbCmd} shell monkey -p ${argAppId} -c android.intent.category.LAUNCHER 1`, { stdio: "ignore" });
-    } catch {}
-  }
 
   if (!config.marketing) {
     config.marketing = {
       appName,
       shortDescription: "Fast, intuitive, and modern mobile experience.",
       themePreset: "clean-light",
-      accentColor: "#4F46E5"
+      accentColor: targetDevice.platform === "ios" ? "#007AFF" : "#4F46E5"
     };
   } else if (argAppName || argAppId) {
     config.marketing.appName = appName;
   }
+
   if (!config.app) {
-    config.app = { appId, platform: "android" };
+    config.app = { appId, platform: targetDevice.platform };
   } else {
     config.app.appId = appId;
+    config.app.platform = targetDevice.platform;
   }
 
   const projectDir = argProjectDir || path.resolve(process.cwd(), "projects", appId);
@@ -159,28 +148,26 @@ async function runManualOperator() {
   if (!fs.existsSync(projectScreenshotsDir)) fs.mkdirSync(projectScreenshotsDir, { recursive: true });
   if (!fs.existsSync(templateScreenshotsDir)) fs.mkdirSync(templateScreenshotsDir, { recursive: true });
 
-  // Calculate starting index based on existing files or start fresh
   const existingFiles = fs.readdirSync(projectScreenshotsDir).filter(f => /^slide-\d+\.png$/.test(f));
   let slideIndex = 1;
 
   console.log("\n==========================================================");
   console.log("MANUAL OPERATOR MODE - LIVE SCREEN SNAPPER");
   console.log("==========================================================");
-  console.log(`Connected Device : ${deviceName}`);
+  console.log(`Connected Device : [${targetDevice.platform.toUpperCase()}] ${targetDevice.name}`);
   console.log(`Target Project   : ${appId} (${appName})`);
   console.log(`Save Directory   : ${projectScreenshotsDir}`);
   console.log("----------------------------------------------------------");
   console.log("Instructions:");
-  console.log("  - Navigate to any screen on your phone or emulator.");
+  console.log(`  - Navigate to any screen on your ${targetDevice.platform === "ios" ? "iPhone" : "Android phone"}.`);
   console.log("  - Press [+] or [Enter] in this terminal to snap the screen.");
-  console.log("  - (Optional) Type a short screen name (e.g. 'clients') + [Enter].");
+  console.log("  - (Optional) Type a short screen hint (e.g. 'cart', 'profile') + [Enter].");
   console.log("  - When finished, type [done] (or [d]) to generate labels & launch editor.");
   console.log("  - Type [q] to quit without saving.");
   console.log("==========================================================\n");
 
   const rl = readline.createInterface({ input, output });
 
-  // Ask whether to overwrite/start fresh or append
   if (existingFiles.length > 0) {
     const choice = await rl.question(`Found ${existingFiles.length} existing screenshot(s). Start [fresh] or [append]? [fresh]: `);
     if (choice.trim().toLowerCase() === "append") {
@@ -197,7 +184,6 @@ async function runManualOperator() {
       console.log(`✓ Starting fresh from Slide 1...\n`);
     }
   } else {
-    // Clear leftover template slides from any previous project
     for (const f of fs.readdirSync(templateScreenshotsDir)) {
       if (/^slide-\d+(?:-(?:ios|android))?\.(?:png|xml|meta\.json)$/i.test(f)) {
         try { fs.unlinkSync(path.join(templateScreenshotsDir, f)); } catch {}
@@ -225,8 +211,7 @@ async function runManualOperator() {
 
     const userHint = rawTrimmed && rawTrimmed !== "+" && rawTrimmed !== "s" && rawTrimmed !== "snap" ? rawTrimmed : "";
 
-    // Capture screen & live Android UI XML context
-    console.log(`   Snapping screen from device ${deviceName}...`);
+    console.log(`   Snapping screen from ${targetDevice.name}...`);
     const fileName = `slide-${slideIndex}.png`;
     const projectDest = path.join(projectScreenshotsDir, fileName);
     const templateDest = path.join(templateScreenshotsDir, fileName);
@@ -235,18 +220,18 @@ async function runManualOperator() {
 
     try {
       let hasXml = false;
-      try {
-        execSync(`${adbCmd} shell uiautomator dump /sdcard/window_dump.xml`, { stdio: "ignore", timeout: 4000 });
-        execSync(`${adbCmd} pull /sdcard/window_dump.xml "${xmlDest}"`, { stdio: "ignore", timeout: 4000 });
-        execSync(`${adbCmd} shell rm -f /sdcard/window_dump.xml`, { stdio: "ignore" });
-        hasXml = fs.existsSync(xmlDest);
-      } catch {}
+      if (isAndroid) {
+        try {
+          execSync(`${adbCmd} -s ${targetDevice.id} shell uiautomator dump /sdcard/window_dump.xml`, { stdio: "ignore", timeout: 4000 });
+          execSync(`${adbCmd} -s ${targetDevice.id} pull /sdcard/window_dump.xml "${xmlDest}"`, { stdio: "ignore", timeout: 4000 });
+          execSync(`${adbCmd} -s ${targetDevice.id} shell rm -f /sdcard/window_dump.xml`, { stdio: "ignore" });
+          hasXml = fs.existsSync(xmlDest);
+        } catch {}
+      }
 
-      execSync(`${adbCmd} shell screencap -p /sdcard/manual_snap.png`, { stdio: "ignore" });
-      execSync(`${adbCmd} pull /sdcard/manual_snap.png "${projectDest}"`, { stdio: "ignore" });
-      try { execSync(`${adbCmd} shell rm -f /sdcard/manual_snap.png`, { stdio: "ignore" }); } catch {}
+      const snapOk = await captureDeviceScreenshot(targetDevice, projectDest);
 
-      if (fs.existsSync(projectDest) && fs.statSync(projectDest).size > 1000) {
+      if (snapOk && fs.existsSync(projectDest) && fs.statSync(projectDest).size > 1000) {
         fs.copyFileSync(projectDest, templateDest);
 
         const uiTexts = hasXml ? extractVisibleUiTexts(xmlDest) : [];
@@ -262,7 +247,14 @@ async function runManualOperator() {
         const templateIosDest = path.join(templateScreenshotsDir, `slide-${slideIndex}-ios.png`);
         const templateAndroidDest = path.join(templateScreenshotsDir, `slide-${slideIndex}-android.png`);
 
-        await processScreenshotCrossPlatform(projectDest, projectIosDest, projectAndroidDest, "android", hasXml ? xmlDest : undefined);
+        await processScreenshotCrossPlatform(
+          projectDest,
+          projectIosDest,
+          projectAndroidDest,
+          targetDevice.platform,
+          hasXml ? xmlDest : undefined
+        );
+
         if (fs.existsSync(projectIosDest)) fs.copyFileSync(projectIosDest, templateIosDest);
         if (fs.existsSync(projectAndroidDest)) fs.copyFileSync(projectAndroidDest, templateAndroidDest);
 
@@ -273,10 +265,10 @@ async function runManualOperator() {
         console.log(`   Total captured: ${capturedSlides.length} screen(s).\n`);
         slideIndex++;
       } else {
-        console.error("   ❌ Capture failed. Ensure your screen is unlocked.");
+        console.error("   ❌ Capture failed. Ensure your screen is unlocked and app is visible.");
       }
     } catch (err: any) {
-      console.error("   ❌ Error during screencap:", err?.message || err);
+      console.error("   ❌ Error during capture:", err?.message || err);
     }
   }
 
@@ -306,17 +298,15 @@ async function runManualOperator() {
   buildAppStoreScreenshotsJson(
     appName,
     config?.marketing?.themePreset || "clean-light",
-    config?.marketing?.accentColor || "#EA580C",
+    config?.marketing?.accentColor || (targetDevice.platform === "ios" ? "#007AFF" : "#EA580C"),
     generatedSlides,
     appId
   );
 
-  // Auto-detect & apply AI color palette and matching theme
   try {
     await applyAutoThemeToProject(projectDir, path.resolve(process.cwd(), "template"));
   } catch {}
 
-  // Sync to project folder
   try {
     const templateJsonPath = path.resolve(process.cwd(), "template/app-store-screenshots.json");
     const projectJsonPath = path.join(projectDir, "app-store-screenshots.json");

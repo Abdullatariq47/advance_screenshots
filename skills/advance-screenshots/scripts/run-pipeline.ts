@@ -87,11 +87,12 @@ async function run() {
 
   console.log("=== Step 1: Initiating Dynamic Mobile Navigation ===");
   try {
+    const platformFlag = config.app?.platform ? ` --platform "${config.app.platform}"` : "";
     if (config.captureMode === "manual") {
       console.log("Manual Operator Mode: Browse the app on your device and snap screens.\n");
-      execSync(`npx tsx ./scripts/manual-operator.ts --config "${configPath}" --projectDir "${projectDir}" --captureOnly`, { stdio: "inherit" });
+      execSync(`npx tsx ./scripts/manual-operator.ts --config "${configPath}" --projectDir "${projectDir}"${platformFlag} --captureOnly`, { stdio: "inherit" });
     } else {
-      execSync(`npx tsx ./scripts/agent-executor.ts --config "${configPath}" --projectDir "${projectDir}"`, { stdio: "inherit" });
+      execSync(`npx tsx ./scripts/agent-executor.ts --config "${configPath}" --projectDir "${projectDir}"${platformFlag}`, { stdio: "inherit" });
     }
   } catch (err) {
     console.error("\n❌ [Pipeline Error] Screen capture process failed or was aborted.");
