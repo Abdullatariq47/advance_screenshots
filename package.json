@@ -1,0 +1,49 @@
+{
+  "name": "advance-screenshots",
+  "version": "1.0.0",
+  "description": "Advanced App Store & Google Play Screenshot Generator with Autonomous Mobile Capture, Interactive Terminal Snapper, 2D Connected Canvas, and Cross-Platform Sanitization",
+  "main": "dist/index.js",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abdullatariq47/advance_screenshots.git"
+  },
+  "keywords": [
+    "app-store",
+    "google-play",
+    "screenshots",
+    "app-store-screenshots",
+    "mobile-capture",
+    "nextjs",
+    "claude-skill",
+    "agent-skill"
+  ],
+  "author": "Abdullah Tariq",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Abdullatariq47/advance_screenshots/issues"
+  },
+  "homepage": "https://github.com/Abdullatariq47/advance_screenshots#readme",
+  "scripts": {
+    "pipeline": "tsx ./scripts/run-pipeline.ts",
+    "pipeline:quick": "tsx ./scripts/run-pipeline.ts --quick",
+    "pipeline:dry": "tsx ./scripts/run-pipeline.ts --no-server",
+    "capture:manual": "tsx ./scripts/manual-operator.ts",
+    "mcp:build": "tsc -p tools/mobile-capture-mcp",
+    "mcp:start": "node tools/mobile-capture-mcp/dist/index.js",
+    "editor:dev": "cd template && npm run dev",
+    "editor:build": "cd template && npm run build",
+    "server:kill": "tsx ./scripts/kill-server.ts",
+    "clean": "tsx ./scripts/kill-server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

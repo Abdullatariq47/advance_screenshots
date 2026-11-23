@@ -1,0 +1,19 @@
+{
+  "app": {
+    "platform": "android",
+    "appId": "com.example.app",
+    "auth": {
+      "hasAuth": false,
+      "hints": "Manual operator mode: user controls device directly."
+    }
+  },
+  "captureMode": "manual",
+  "captureGoals": [],
+  "marketing": {
+    "appName": "My App",
+    "shortDescription": "Fast, intuitive, and modern mobile experience.",
+    "themePreset": "clean-light",
+    "accentColor": "#4F46E5"
+  }
+}
+

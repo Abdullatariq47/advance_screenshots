@@ -1,0 +1,103 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+
+# Build output
+.next/
+out/
+build/
+dist/
+.turbo/
+
+# Test and coverage output
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+template/.env
+template/.env.*
+!template/.env.example
+
+# Keys and signing artifacts
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# Agent runtime directories
+.gemini/
+
+# Per-user active pipeline config
+pipeline.config.json
+
+# Individual user projects and generated run artifacts
+projects/*
+!projects/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+
+# Hosting and deployment
+.vercel/
+.netlify/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Template public user screenshots generated during runs
+template/public/screenshots/*.png
+template/public/screenshots/**/*.png
+!template/public/screenshots/**/.gitkeep
+template/public/screenshots/uploaded/
+template/public/app-icon.png
+template/public/fonts/imported/*
+!template/public/fonts/imported/.gitkeep
+
+# Skill template user assets
+skills/app-store-screenshots/template/public/app-icon.png
+skills/app-store-screenshots/template/public/screenshots/**/*.png
+skills/app-store-screenshots/template/public/screenshots/uploaded/
+.agents/skills/app-store-screenshots/template/public/screenshots/**/*.png
+.agents/skills/app-store-screenshots/template/public/screenshots/uploaded/
+.claude/skills/app-store-screenshots/template/public/screenshots/**/*.png
+.claude/skills/app-store-screenshots/template/public/screenshots/uploaded/
+
+# Temporary files & root debug screen captures
+*.tmp
+*.temp
+.cache/
+calls_screen.png
+dialer_keypad.png
+dialer_screen.png
+postlogin_*.png
+test_*.png
+snap_*.png
+
+# Tester Army reports and recordings
+.e2e/
+current_screen.xml
+template/public/screenshots/*.xml
+template/public/screenshots/*.meta.json
