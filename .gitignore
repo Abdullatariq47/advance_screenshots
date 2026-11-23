@@ -38,6 +38,7 @@ template/.env.*
 
 # Agent runtime directories
 .gemini/
+.claude/
 
 # Per-user active pipeline config
 pipeline.config.json

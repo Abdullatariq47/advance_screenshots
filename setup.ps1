@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # Advance Screenshots - Automated Environment Setup (Windows PowerShell)
 # Idempotent: Safe to run repeatedly; automatically skips existing installations.
 # ==============================================================================
@@ -58,6 +58,18 @@ Write-Host ""
 Write-Host "[*] Installing Next.js visual editor dependencies..." -ForegroundColor Cyan
 npm --prefix template install --no-audit --no-fund
 
+# 4. Optional: Install as AI Skill if requested via flags
+param(
+    [switch]$Global,
+    [switch]$Project
+)
+
+if ($Global) {
+    npm run install:global
+} elseif ($Project) {
+    npm run install:project
+}
+
 Write-Host ""
 Write-Host "=====================================================" -ForegroundColor Green
 Write-Host "   Setup complete! You are ready to start.           " -ForegroundColor Green
@@ -69,4 +81,10 @@ Write-Host "     npm run capture:manual -- --appId com.yourcompany.yourapp" -For
 Write-Host ""
 Write-Host "  2. Web Visual Editor (Connected 2D Canvas):" -ForegroundColor Cyan
 Write-Host "     npm run editor:dev  ->  http://localhost:3000" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  3. Install as Global AI Skill (Claude Code & Antigravity across your PC):" -ForegroundColor Cyan
+Write-Host "     npm run install:global" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  4. Install within Current Project Only:" -ForegroundColor Cyan
+Write-Host "     npm run install:project" -ForegroundColor Gray
 Write-Host ""

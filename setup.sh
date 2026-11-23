@@ -69,6 +69,13 @@ echo ""
 echo -e "${CYAN}[*] Installing Next.js visual editor dependencies...${RESET}"
 npm --prefix template install --no-audit --no-fund
 
+# 4. Optional: Install as AI Skill if requested via flags
+if [[ "$*" == *"--global"* ]] || [[ "$*" == *"-g"* ]]; then
+    npm run install:global
+elif [[ "$*" == *"--project"* ]] || [[ "$*" == *"-p"* ]]; then
+    npm run install:project
+fi
+
 echo ""
 echo -e "${BOLD}${GREEN}=====================================================${RESET}"
 echo -e "${BOLD}${GREEN}   Setup complete! You are ready to start.           ${RESET}"
@@ -80,4 +87,10 @@ echo -e "     npm run capture:manual -- --appId com.yourcompany.yourapp"
 echo ""
 echo -e "  ${BOLD}2. Web Visual Editor (Connected 2D Canvas):${RESET}"
 echo -e "     npm run editor:dev  ->  http://localhost:3000"
+echo ""
+echo -e "  ${BOLD}3. Install as Global AI Skill (Claude Code & Antigravity across your Mac):${RESET}"
+echo -e "     npm run install:global"
+echo ""
+echo -e "  ${BOLD}4. Install within Current Project Only:${RESET}"
+echo -e "     npm run install:project"
 echo ""

@@ -24,22 +24,30 @@ You can run this project in two distinct ways depending on your setup:
 
 Install this project as an agent skill into **Claude Code**, **Google Antigravity**, **Cursor**, **Windsurf**, or **OpenAI Codex**. Once installed, you can trigger screen capture, sanitization, copy generation, and editor setup simply by chatting with your AI agent in plain English.
 
-#### Global Skill Installation
-```bash
-# Recommended: Clone into your agent's global skills directory under 'advance-screenshots'
-# (Using 'advance-screenshots' isolates your repository so upstream updates never overwrite your custom build)
+#### 1-Click Installer (Global vs Project-Level)
+You can choose whether to install the skill globally across your entire computer or isolate it within a single project repository:
 
-# For Claude Code:
+```bash
+# 1. Install as Global AI Skill (Claude Code & Antigravity across all your projects):
+npm run install:global
+
+# 2. Install inside the current project workspace only (.agents/skills & .claude/skills):
+npm run install:project
+
+# 3. Interactive prompt wizard (Choose Global, Project, or Custom path):
+npm run install:skill
+```
+
+#### Manual / Direct Git Clone (Alternative)
+```bash
+# For Claude Code (Global):
 git clone https://github.com/Abdullatariq47/advance_screenshots.git ~/.claude/skills/advance-screenshots
 
-# For Google Antigravity:
-git clone https://github.com/Abdullatariq47/advance_screenshots.git ~/.gemini/antigravity/skills/advance-screenshots
+# For Google Antigravity (Global):
+git clone https://github.com/Abdullatariq47/advance_screenshots.git ~/.gemini/config/skills/advance-screenshots
 
-# For Cursor / Windsurf (in your workspace):
+# For Cursor / Windsurf / Claude Code (within current project workspace):
 git clone https://github.com/Abdullatariq47/advance_screenshots.git .agents/skills/advance-screenshots
-
-# Or via universal skills.sh installer:
-npx skills add https://github.com/Abdullatariq47/advance_screenshots.git
 ```
 
 > [!NOTE]
